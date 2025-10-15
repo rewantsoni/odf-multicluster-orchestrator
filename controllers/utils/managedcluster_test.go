@@ -10,7 +10,7 @@ import (
 
 func Test_GetNamespacedNameForClusterInfo(t *testing.T) {
 	type args struct {
-		managedCluster clusterv1.ManagedCluster
+		managedCluster *clusterv1.ManagedCluster
 	}
 	tests := []struct {
 		name    string
@@ -21,7 +21,7 @@ func Test_GetNamespacedNameForClusterInfo(t *testing.T) {
 		{
 			name: "Valid Namespaced Name Claim",
 			args: args{
-				managedCluster: clusterv1.ManagedCluster{
+				managedCluster: &clusterv1.ManagedCluster{
 					Status: clusterv1.ManagedClusterStatus{
 						ClusterClaims: []clusterv1.ManagedClusterClaim{
 							{
@@ -38,7 +38,7 @@ func Test_GetNamespacedNameForClusterInfo(t *testing.T) {
 		{
 			name: "Missing Namespaced Name Claim",
 			args: args{
-				managedCluster: clusterv1.ManagedCluster{
+				managedCluster: &clusterv1.ManagedCluster{
 					Status: clusterv1.ManagedClusterStatus{
 						ClusterClaims: []clusterv1.ManagedClusterClaim{},
 					},
@@ -50,7 +50,7 @@ func Test_GetNamespacedNameForClusterInfo(t *testing.T) {
 		{
 			name: "Invalid Format for Namespaced Name Claim",
 			args: args{
-				managedCluster: clusterv1.ManagedCluster{
+				managedCluster: &clusterv1.ManagedCluster{
 					Status: clusterv1.ManagedClusterStatus{
 						ClusterClaims: []clusterv1.ManagedClusterClaim{
 							{

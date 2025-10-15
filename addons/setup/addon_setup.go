@@ -72,7 +72,7 @@ func (a *Addons) Manifests(cluster *clusterv1.ManagedCluster, addon *addonapiv1a
 
 	var odfOperatorNamespace string
 	if utils.HasRequiredODFKey(cluster) {
-		odfOperatorNamespacedName, err := utils.GetNamespacedNameForClusterInfo(*cluster)
+		odfOperatorNamespacedName, err := utils.GetNamespacedNameForClusterInfo(cluster)
 		if err != nil {
 			return objects, fmt.Errorf("error while getting ODF operator namespace on the spoke cluster %q. %w", cluster.Name, err)
 		}

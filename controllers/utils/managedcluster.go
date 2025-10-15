@@ -40,7 +40,7 @@ func GetManagedClusterById(ctx context.Context, c client.Client, clusterId strin
 	return &managedClusterList.Items[0], nil
 }
 
-func GetNamespacedNameForClusterInfo(managedCluster clusterv1.ManagedCluster) (types.NamespacedName, error) {
+func GetNamespacedNameForClusterInfo(managedCluster *clusterv1.ManagedCluster) (types.NamespacedName, error) {
 	clusterClaims := managedCluster.Status.ClusterClaims
 	for _, claim := range clusterClaims {
 		if claim.Name == OdfInfoClusterClaimNamespacedName {
