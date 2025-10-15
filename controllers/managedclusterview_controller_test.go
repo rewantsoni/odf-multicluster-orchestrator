@@ -9,8 +9,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/controllers/utils"
+
+	"github.com/google/uuid"
 	viewv1beta1 "github.com/stolostron/multicloud-operators-foundation/pkg/apis/view/v1beta1"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"

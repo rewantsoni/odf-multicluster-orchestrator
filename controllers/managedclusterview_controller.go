@@ -7,13 +7,12 @@ import (
 	"log/slog"
 	"strings"
 
-	ocsv1alpha1 "github.com/red-hat-storage/ocs-operator/api/v4/v1alpha1"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/controllers/utils"
+
+	ocsv1alpha1 "github.com/red-hat-storage/ocs-operator/api/v4/v1alpha1"
 	viewv1beta1 "github.com/stolostron/multicloud-operators-foundation/pkg/apis/view/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,12 +29,6 @@ type ManagedClusterViewReconciler struct {
 	testEnvFile      string
 	CurrentNamespace string
 }
-
-const (
-	ODFInfoConfigMapName    = "odf-info"
-	ConfigMapResourceType   = "ConfigMap"
-	ClientInfoConfigMapName = "odf-client-info"
-)
 
 func (r *ManagedClusterViewReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Logger.Info("Setting up ManagedClusterViewReconciler with manager")
@@ -54,6 +47,12 @@ func (r *ManagedClusterViewReconciler) SetupWithManager(mgr ctrl.Manager) error 
 			}
 			return hasODFInfoInScope(obj)
 		},
+		DeleteFunc: func(_ event.DeleteEvent) bool {
+			return false
+		},
+		GenericFunc: func(_ event.TypedGenericEvent[client.Object]) bool {
+			return false
+		},
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -62,7 +61,7 @@ func (r *ManagedClusterViewReconciler) SetupWithManager(mgr ctrl.Manager) error 
 }
 
 func hasODFInfoInScope(mc *viewv1beta1.ManagedClusterView) bool {
-	if mc.Spec.Scope.Name == utils.ODFInfoConfigMapName && mc.Spec.Scope.Resource == ConfigMapResourceType {
+	if mc.Spec.Scope.Name == utils.ODFInfoConfigMapName && mc.Spec.Scope.Resource == "ConfigMap" {
 		return true
 	}
 	return false
@@ -72,15 +71,16 @@ func (r *ManagedClusterViewReconciler) Reconcile(ctx context.Context, req reconc
 	logger := r.Logger.With("ManagedClusterView", req.NamespacedName)
 	logger.Info("Reconciling ManagedClusterView")
 
-	var managedClusterView viewv1beta1.ManagedClusterView
-	if err := r.Client.Get(ctx, req.NamespacedName, &managedClusterView); err != nil {
+	managedClusterView := &viewv1beta1.ManagedClusterView{}
+	if err := r.Client.Get(ctx, req.NamespacedName, managedClusterView); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			logger.Error("Failed to get ManagedClusterView", "error", err)
+			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, nil
 	}
 
-	if err := createOrUpdateConfigMap(ctx, r.Client, r.CurrentNamespace, managedClusterView, r.Logger); err != nil {
+	if err := r.reconcileODFClientInfoCM(ctx, managedClusterView); err != nil {
 		logger.Error("Failed to create or update ConfigMap for ManagedClusterView", "error", err)
 		return ctrl.Result{}, err
 	}
@@ -90,13 +90,10 @@ func (r *ManagedClusterViewReconciler) Reconcile(ctx context.Context, req reconc
 	return ctrl.Result{}, nil
 }
 
-func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNamespace string, managedClusterView viewv1beta1.ManagedClusterView, logger *slog.Logger) error {
-	logger = logger.With("ManagedClusterView", managedClusterView.Name, "Namespace", managedClusterView.Namespace)
-
+func (r *ManagedClusterViewReconciler) reconcileODFClientInfoCM(ctx context.Context, managedClusterView *viewv1beta1.ManagedClusterView) error {
 	// Initialize an empty map to hold the result data.
 	var resultData map[string]interface{}
-	err := json.Unmarshal(managedClusterView.Status.Result.Raw, &resultData)
-	if err != nil {
+	if err := json.Unmarshal(managedClusterView.Status.Result.Raw, &resultData); err != nil {
 		return fmt.Errorf("failed to unmarshal result data. %w", err)
 	}
 
@@ -116,16 +113,16 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 		if !ok {
 			return fmt.Errorf("unexpected value format in data for key %s: expected string, got %T", key, value)
 		}
-		var odfInfo ocsv1alpha1.OdfInfoData
-		err := yaml.Unmarshal([]byte(yamlContent), &odfInfo)
-		if err != nil {
+		odfInfo := &ocsv1alpha1.OdfInfoData{}
+		if err := yaml.Unmarshal([]byte(yamlContent), odfInfo); err != nil {
 			return fmt.Errorf("failed to unmarshal ODF info data for key %s: %w", key, err)
 		}
 
 		providerPublicEndpoint := odfInfo.StorageCluster.Annotations[ocsv1alpha1.ApiServerExportedAddressAnnotationName]
 		if providerPublicEndpoint == "" {
-			logger.Info("StorageProviderPublicEndpoint is not available.")
+			r.Logger.Info("StorageProviderPublicEndpoint is not available.")
 		}
+
 		cephblockPoolsInfo := []utils.InfoCephBlockPool{}
 		for _, cephblockpool := range odfInfo.StorageCluster.InfoCephBlockPools {
 			cephblockPoolsInfo = append(cephblockPoolsInfo, utils.InfoCephBlockPool{
@@ -133,6 +130,7 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 				MirrorEnabled: cephblockpool.MirrorEnabled,
 			})
 		}
+
 		providerInfo := utils.ProviderInfo{
 			Version:                       odfInfo.Version,
 			DeploymentType:                odfInfo.DeploymentType,
@@ -163,8 +161,12 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 			clientInfoMap[utils.GetKey(managedClusterView.Namespace, odfInfo.StorageCluster.NamespacedName.Name)] = string(clientInfoJSON)
 		} else {
 			for _, client := range odfInfo.Clients {
-				managedCluster, err := utils.GetManagedClusterById(ctx, c, client.ClusterID)
+				managedCluster, err := utils.GetManagedClusterById(ctx, r.Client, client.ClusterID)
 				if err != nil {
+					if errors.IsNotFound(err) {
+						r.Logger.Info(fmt.Sprintf("Managed Cluster with id %s not found", client.ClusterID), err.Error())
+						continue
+					}
 					return err
 				}
 				clientInfo := utils.ClientInfo{
@@ -184,14 +186,11 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 		}
 	}
 
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ClientInfoConfigMapName,
-			Namespace: operatorNamespace,
-		},
-	}
-	err = c.Get(ctx, types.NamespacedName{Name: ClientInfoConfigMapName, Namespace: operatorNamespace}, configMap)
-	if err != nil && !errors.IsNotFound(err) {
+	configMap := &corev1.ConfigMap{}
+	configMap.Name = utils.ClientInfoConfigMapName
+	configMap.Namespace = r.CurrentNamespace
+
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(configMap), configMap); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("failed to get ConfigMap. %w", err)
 	}
 
@@ -199,12 +198,11 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 		configMap.Data = make(map[string]string)
 	}
 
-	op, err := controllerutil.CreateOrUpdate(ctx, c, configMap, func() error {
-
-		if configMap.Labels == nil {
-			configMap.Labels = make(map[string]string)
+	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, configMap, func() error {
+		utils.AddLabel(configMap, utils.HubRecoveryLabel, "")
+		if err := controllerutil.SetOwnerReference(managedClusterView, configMap, r.Client.Scheme()); err != nil {
+			return err
 		}
-		configMap.Labels[utils.HubRecoveryLabel] = ""
 
 		if configMap.Data == nil {
 			configMap.Data = make(map[string]string)
@@ -213,30 +211,12 @@ func createOrUpdateConfigMap(ctx context.Context, c client.Client, operatorNames
 		for clientKey, clientInfo := range clientInfoMap {
 			configMap.Data[clientKey] = clientInfo
 		}
-
-		mcvOwnerRefs := managedClusterView.GetOwnerReferences()
-		for _, mcvOwnerRef := range mcvOwnerRefs {
-			exists := false
-			for _, existingOwnerRef := range configMap.OwnerReferences {
-				if existingOwnerRef.UID == mcvOwnerRef.UID {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				falseValue := false
-				mcvOwnerRef.Controller = &falseValue
-				configMap.OwnerReferences = append(configMap.OwnerReferences, mcvOwnerRef)
-			}
-		}
 		return nil
 	})
-
 	if err != nil {
 		return fmt.Errorf("failed to create or update ConfigMap. %w", err)
 	}
 
-	logger.Info(fmt.Sprintf("ConfigMap %s in namespace %s has been %s", ClientInfoConfigMapName, operatorNamespace, op))
-
+	r.Logger.Info(fmt.Sprintf("ConfigMap %s in namespace %s has been %s", utils.ClientInfoConfigMapName, r.CurrentNamespace, op))
 	return nil
 }

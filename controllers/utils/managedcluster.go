@@ -27,8 +27,7 @@ func GetManagedClusterById(ctx context.Context, c client.Client, clusterId strin
 	listOptions := &client.ListOptions{
 		LabelSelector: labelSelector,
 	}
-	err := c.List(ctx, managedClusterList, listOptions)
-	if err != nil {
+	if err := c.List(ctx, managedClusterList, listOptions); err != nil {
 		return nil, fmt.Errorf("failed to list managed clusters: %v", err)
 	}
 
