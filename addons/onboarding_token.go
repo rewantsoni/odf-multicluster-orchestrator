@@ -12,16 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/addons/setup"
-	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/controllers/utils"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 type OnboardingSubjectRole string
@@ -69,61 +62,6 @@ func requestStorageClusterPeerToken(ctx context.Context, proxyServiceNamespace s
 	}
 
 	return body, nil
-}
-
-func createStorageClusterPeerTokenSecret(ctx context.Context, client client.Client, scheme *runtime.Scheme, spokeClusterName string, odfOperatorNamespace string, mirrorPeer multiclusterv1alpha1.MirrorPeer, storageClusterRef *multiclusterv1alpha1.StorageClusterRef) error {
-	uniqueSecretName := string(mirrorPeer.GetUID())
-	_, err := utils.FetchSecretWithName(ctx, client, types.NamespacedName{Namespace: spokeClusterName, Name: uniqueSecretName})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to get secret %s/%s: %w", spokeClusterName, uniqueSecretName, err)
-	}
-	if err == nil {
-		return errors.NewAlreadyExists(corev1.Resource("secret"), uniqueSecretName)
-	}
-
-	token, err := requestStorageClusterPeerToken(ctx, odfOperatorNamespace)
-	if err != nil {
-		return fmt.Errorf("unable to generate StorageClusterPeer token. %w", err)
-	}
-
-	tokenSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      uniqueSecretName,
-			Namespace: spokeClusterName,
-			Labels: map[string]string{
-				utils.CreatedByLabelKey:  setup.TokenExchangeName,
-				utils.SecretLabelTypeKey: string(utils.ProviderLabel),
-				utils.HubRecoveryLabel:   "",
-			},
-		},
-		Data: map[string][]byte{
-			utils.NamespaceKey:          []byte(storageClusterRef.Namespace),
-			utils.StorageClusterNameKey: []byte(storageClusterRef.Name),
-			utils.SecretDataKey:         token,
-		},
-	}
-
-	err = controllerutil.SetOwnerReference(&mirrorPeer, tokenSecret, scheme)
-	if err != nil {
-		return fmt.Errorf("failed to set owner reference for secret %s/%s: %w", spokeClusterName, uniqueSecretName, err)
-	}
-
-	return client.Create(ctx, tokenSecret)
-}
-
-func deleteStorageClusterPeerTokenSecret(ctx context.Context, client client.Client, tokenNamespace string, tokenName string) error {
-	token := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tokenName,
-			Namespace: tokenNamespace,
-		},
-	}
-
-	err := client.Delete(ctx, token)
-	if err != nil && !errors.IsNotFound(err) {
-		return err
-	}
-	return nil
 }
 
 func UnmarshalOnboardingToken(token *corev1.Secret) (*OnboardingTicket, error) {

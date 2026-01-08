@@ -19,7 +19,9 @@ package addons
 import (
 	"context"
 	"fmt"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/addons/setup"
 	"log/slog"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"time"
 
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
@@ -60,9 +62,8 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	logger := r.Logger.With("MirrorPeer", req.NamespacedName.String())
 	logger.Info("Running MirrorPeer reconciler on spoke cluster")
 
-	var mirrorPeer multiclusterv1alpha1.MirrorPeer
-	err := r.HubClient.Get(ctx, req.NamespacedName, &mirrorPeer)
-	if err != nil {
+	mirrorPeer := &multiclusterv1alpha1.MirrorPeer{}
+	if err := r.HubClient.Get(ctx, req.NamespacedName, mirrorPeer); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("MirrorPeer not found, ignoring since object must have been deleted")
 			return ctrl.Result{}, nil
@@ -71,7 +72,13 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	hasStorageClientRef, err := utils.IsStorageClientType(ctx, r.HubClient, mirrorPeer, r.HubOperatorNamespace)
+	clientInfoMap, err := utils.FetchConfigMap(ctx, r.HubClient, utils.ClientInfoConfigMapName, r.CurrentNamespace)
+	if err != nil {
+		logger.Error("Failed to get odf-client-info configmap", "error", err)
+		return ctrl.Result{}, err
+	}
+
+	hasStorageClientRef, err := utils.IsStorageClientType(mirrorPeer, clientInfoMap.Data)
 	logger.Info("MirrorPeer has client reference?", "True/False", hasStorageClientRef)
 
 	if err != nil {
@@ -91,7 +98,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			Namespace: sc.Namespace,
 		}
 	} else {
-		scr, err = utils.GetCurrentStorageClusterRef(&mirrorPeer, r.SpokeClusterName)
+		scr, err = utils.GetCurrentStorageClusterRef(mirrorPeer, r.SpokeClusterName)
 		if err != nil {
 			logger.Error("Failed to get current storage cluster ref", "error", err)
 			return ctrl.Result{}, err
@@ -107,7 +114,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if !utils.ContainsString(mirrorPeer.GetFinalizers(), agentFinalizer) {
 			logger.Info("Adding finalizer to MirrorPeer", "finalizer", agentFinalizer)
 			mirrorPeer.Finalizers = append(mirrorPeer.Finalizers, agentFinalizer)
-			if err := r.HubClient.Update(ctx, &mirrorPeer); err != nil {
+			if err := r.HubClient.Update(ctx, mirrorPeer); err != nil {
 				logger.Error("Failed to add finalizer to MirrorPeer", "error", err)
 				return ctrl.Result{}, err
 			}
@@ -123,7 +130,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 
-		cm, err := utils.FetchClientInfoConfigMap(ctx, r.HubClient, r.HubOperatorNamespace)
+		cm, err := utils.FetchConfigMap(ctx, r.HubClient, utils.ClientInfoConfigMapName, r.HubOperatorNamespace)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -150,7 +157,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return result, err
 		}
 
-		err = r.HubClient.Get(ctx, req.NamespacedName, &mirrorPeer)
+		err = r.HubClient.Get(ctx, req.NamespacedName, mirrorPeer)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				logger.Info("MirrorPeer deleted during reconciling, skipping")
@@ -160,7 +167,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 
-		err = removeFinalizerFromObject(ctx, r.HubClient, &mirrorPeer, agentFinalizer)
+		err = removeFinalizerFromObject(ctx, r.HubClient, mirrorPeer, agentFinalizer)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -178,7 +185,7 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	if !hasStorageClientRef {
 		logger.Info("Fetching StorageIds")
-		clusterStorageIds, err := r.fetchClusterStorageIds(ctx, &mirrorPeer, types.NamespacedName{Namespace: scr.Namespace, Name: scr.Name})
+		clusterStorageIds, err := r.fetchClusterStorageIds(ctx, mirrorPeer, types.NamespacedName{Namespace: scr.Namespace, Name: scr.Name})
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to fetch cluster storage IDs: %v", err)
 		}
@@ -218,35 +225,57 @@ func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// 	return ctrl.Result{}, nil
 		// }
 		// if mirrorPeer.Status.Phase == multiclusterv1alpha1.ExchangingSecret {
-		var token corev1.Secret
-		err = r.HubClient.Get(ctx, types.NamespacedName{Namespace: r.SpokeClusterName, Name: string(mirrorPeer.GetUID())}, &token)
-		if err != nil && !errors.IsNotFound(err) {
+		tokenSecret := &corev1.Secret{}
+		tokenSecret.Name = string(mirrorPeer.GetUID())
+		tokenSecret.Namespace = r.SpokeClusterName
+		if err = r.HubClient.Get(ctx, client.ObjectKeyFromObject(tokenSecret), tokenSecret); client.IgnoreNotFound(err) != nil {
 			return ctrl.Result{}, err
 		}
-		if err == nil {
+		if tokenSecret.UID != "" {
 			logger.Info("Trying to unmarshal onboarding token.")
-			ticketData, err := UnmarshalOnboardingToken(&token)
+			ticketData, err := UnmarshalOnboardingToken(tokenSecret)
 			if err != nil {
 				logger.Error("Failed to unmarshal the onboarding ticket data")
 				return ctrl.Result{}, err
 			}
 			logger.Info("Successfully unmarshalled onboarding ticket", "ticketData", ticketData)
+
 			if ticketData.ExpirationDate > time.Now().Unix() {
-				logger.Info("Onboarding token has not expired yet. Not renewing it.", "Token", token.Name, "ExpirationDate", ticketData.ExpirationDate)
+				logger.Info("Onboarding token has not expired yet. Not renewing it.", "Token", tokenSecret.Name, "ExpirationDate", ticketData.ExpirationDate)
 				return ctrl.Result{}, nil
 			}
-			logger.Info("Onboarding token has expired. Deleting it", "Token", token.Name)
-			err = deleteStorageClusterPeerTokenSecret(ctx, r.HubClient, r.SpokeClusterName, string(mirrorPeer.GetUID()))
-			if err != nil {
+
+			logger.Info("Onboarding token has expired. Deleting it", "Token", tokenSecret.Name)
+			if err := r.HubClient.Delete(ctx, tokenSecret); client.IgnoreNotFound(err) != nil {
 				return ctrl.Result{}, err
 			}
 		}
-		logger.Info("Creating a new onboarding token", "Token", token.Name)
-		err = createStorageClusterPeerTokenSecret(ctx, r.HubClient, r.Scheme, r.SpokeClusterName, r.OdfOperatorNamespace, mirrorPeer, scr)
+
+		logger.Info("Creating a new onboarding token", "Token", tokenSecret.Name)
+		token, err := requestStorageClusterPeerToken(ctx, r.OdfOperatorNamespace)
 		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("unable to generate StorageClusterPeer token. %w", err)
+		}
+
+		utils.AddLabel(tokenSecret, utils.CreatedByLabelKey, setup.TokenExchangeName)
+		utils.AddLabel(tokenSecret, utils.SecretLabelTypeKey, string(utils.ProviderLabel))
+		utils.AddLabel(tokenSecret, utils.HubRecoveryLabel, "")
+
+		if err = controllerutil.SetOwnerReference(mirrorPeer, tokenSecret, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set owner reference for secret %s/%s: %w", r.SpokeClusterName, tokenSecret, err)
+		}
+
+		tokenSecret.Data = map[string][]byte{
+			utils.NamespaceKey:          []byte(scr.Namespace),
+			utils.StorageClusterNameKey: []byte(scr.Name),
+			utils.SecretDataKey:         token,
+		}
+
+		if err := r.HubClient.Create(ctx, tokenSecret); err != nil {
 			logger.Error("Failed to create StorageCluster peer token on the hub.", "error", err)
 			return ctrl.Result{}, err
 		}
+
 		// }
 	}
 
@@ -347,7 +376,7 @@ func (r *MirrorPeerReconciler) fetchClusterStorageIds(ctx context.Context, mp *m
 	return clusterStorageIds, nil
 }
 
-func (r *MirrorPeerReconciler) createS3(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer, scNamespace string, hasStorageClientRef bool) error {
+func (r *MirrorPeerReconciler) createS3(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer, scNamespace string, hasStorageClientRef bool) error {
 	bucketNamespace := utils.GetEnvOrDefault("ODR_NAMESPACE", scNamespace, r.testEnvFile)
 	bucketName := utils.GenerateBucketName(mirrorPeer)
 	annotations := map[string]string{
@@ -455,7 +484,7 @@ func (r *MirrorPeerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // deleteS3 deletes the S3 bucket in the storage cluster namespace, each new mirrorpeer generates
 // a new bucket, so we do not need to check if the bucket is being used by another mirrorpeer
-func (r *MirrorPeerReconciler) deleteS3(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer, scNamespace string) error {
+func (r *MirrorPeerReconciler) deleteS3(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer, scNamespace string) error {
 	bucketName := utils.GenerateBucketName(mirrorPeer)
 	bucketNamespace := utils.GetEnvOrDefault("ODR_NAMESPACE", scNamespace, r.testEnvFile)
 	noobaaOBC, err := utils.GetObjectBucketClaim(ctx, r.SpokeClient, bucketName, bucketNamespace)
@@ -477,7 +506,7 @@ func (r *MirrorPeerReconciler) deleteS3(ctx context.Context, mirrorPeer multiclu
 	return nil
 }
 
-func (r *MirrorPeerReconciler) deleteMirrorPeer(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer, scr *multiclusterv1alpha1.StorageClusterRef) (ctrl.Result, error) {
+func (r *MirrorPeerReconciler) deleteMirrorPeer(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer, scr *multiclusterv1alpha1.StorageClusterRef) (ctrl.Result, error) {
 	r.Logger.Info("MirrorPeer is being deleted", "MirrorPeer", mirrorPeer.Name)
 
 	if err := r.deleteS3(ctx, mirrorPeer, scr.Namespace); err != nil {

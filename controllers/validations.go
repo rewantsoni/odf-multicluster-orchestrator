@@ -20,9 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"reflect"
-
 	ocsv1 "github.com/red-hat-storage/ocs-operator/api/v4/v1"
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/controllers/utils"
@@ -33,43 +30,10 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	"log/slog"
 	workv1 "open-cluster-management.io/api/work/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
-
-func undefinedMirrorPeerSpec(spec multiclusterv1alpha1.MirrorPeerSpec) error {
-	if reflect.DeepEqual(spec, multiclusterv1alpha1.MirrorPeerSpec{}) {
-		return fmt.Errorf("validation: MirrorPeer.Spec must not be empty")
-	}
-	return nil
-}
-
-func uniqueSpecItems(spec multiclusterv1alpha1.MirrorPeerSpec) error {
-	if reflect.DeepEqual(spec.Items[0], spec.Items[1]) {
-		return fmt.Errorf("validation: MirrorPeer.Spec.Items fields must be unique within a MirrorPeer object")
-	}
-	return nil
-}
-
-func emptySpecItems(peerRef multiclusterv1alpha1.PeerRef) error {
-	if peerRef.ClusterName == "" || peerRef.StorageClusterRef.Name == "" {
-		return fmt.Errorf("validation: MirrorPeer.Spec.Items fields must not be empty or undefined")
-	}
-	return nil
-}
-
-func isManagedCluster(ctx context.Context, client client.Client, clusterName string) error {
-	var mcluster clusterv1.ManagedCluster
-	err := client.Get(ctx, types.NamespacedName{Name: clusterName}, &mcluster)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return fmt.Errorf("validation: ManagedCluster %q not found : %q is not a managed cluster", clusterName, clusterName)
-		}
-		return fmt.Errorf("validation: unable to get ManagedCluster %q: error: %v", clusterName, err)
-	}
-	return nil
-}
 
 func isVersionCompatible(peerRef multiclusterv1alpha1.PeerRef, clientInfoMap map[string]string) error {
 	clientInfo, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(peerRef.ClusterName, peerRef.StorageClusterRef.Name))
@@ -88,25 +52,14 @@ func isVersionCompatible(peerRef multiclusterv1alpha1.PeerRef, clientInfoMap map
 
 // checkStorageClusterPeerStatus checks if the ManifestWorks for StorageClusterPeer resources
 // have been created and reached the Applied status.
-func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (bool, error) {
+func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (bool, error) {
 	logger.Info("Checking if StorageClusterPeer ManifestWorks have been created and reached Peered status")
-
-	// Fetch the client info ConfigMap
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("Client info ConfigMap not found; requeuing for later retry")
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to fetch client info ConfigMap: %w", err)
-	}
-
 	// Collect client information for each cluster in the MirrorPeer
 	items := mirrorPeer.Spec.Items
 	clientInfos := make([]utils.ClientInfo, 0, len(items))
 	for _, item := range items {
 		clientKey := utils.GetKey(item.ClusterName, item.StorageClusterRef.Name)
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, clientKey)
+		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
 		if err != nil {
 			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
 			return false, err
@@ -166,25 +119,15 @@ func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, lo
 
 // checkClientPairingConfigMapStatus checks if the ManifestWorks for client pairing ConfigMaps
 // have been created and reached the Applied status.
-func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (bool, error) {
+func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (bool, error) {
 	logger.Info("Checking if client pairing ConfigMap ManifestWorks have been created and reached Applied status")
-
-	// Fetch the client info ConfigMap
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("Client info ConfigMap not found; requeuing for later retry")
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to fetch client info ConfigMap: %w", err)
-	}
 
 	// Collect client information for each cluster in the MirrorPeer
 	items := mirrorPeer.Spec.Items
 	clientInfos := make([]utils.ClientInfo, 0, len(items))
 	for _, item := range items {
 		clientKey := utils.GetKey(item.ClusterName, item.StorageClusterRef.Name)
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, clientKey)
+		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
 		if err != nil {
 			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
 			return false, err

@@ -5,12 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -141,24 +138,6 @@ func FetchAllMirrorPeers(ctx context.Context, rc client.Client) ([]multiclusterv
 		return nil, err
 	}
 	return mirrorPeerListObj.Items, nil
-}
-
-func FetchMirrorPeerByName(ctx context.Context, rc client.Client, name string) (*multiclusterv1alpha1.MirrorPeer, error) {
-	var mirrorPeer multiclusterv1alpha1.MirrorPeer
-	err := rc.Get(ctx, types.NamespacedName{Name: name}, &mirrorPeer)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch MirrorPeer %s: %w", name, err)
-	}
-	return &mirrorPeer, nil
-}
-
-func FetchSecretWithName(ctx context.Context, rc client.Client, secretName types.NamespacedName) (*corev1.Secret, error) {
-	var secret corev1.Secret
-	err := rc.Get(ctx, secretName, &secret)
-	if err != nil {
-		return nil, err
-	}
-	return &secret, nil
 }
 
 func UnmarshalS3Secret(s3Secret *corev1.Secret) (*S3Token, error) {

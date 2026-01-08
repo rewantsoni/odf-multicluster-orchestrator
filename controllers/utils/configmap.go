@@ -40,10 +40,6 @@ func GetODFInfoConfigMap(ctx context.Context, c client.Client, namespace string)
 	return FetchConfigMap(ctx, c, ODFInfoConfigMapName, namespace)
 }
 
-func FetchClientInfoConfigMap(ctx context.Context, c client.Client, currentNamespace string) (*corev1.ConfigMap, error) {
-	return FetchConfigMap(ctx, c, ClientInfoConfigMapName, currentNamespace)
-}
-
 func GetStorageClientMapping(ctx context.Context, c client.Client, currentNamespace string) (*corev1.ConfigMap, error) {
 	return FetchConfigMap(ctx, c, StorageClientMappingConfigMapName, currentNamespace)
 }

@@ -21,6 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	clusterv1 "open-cluster-management.io/api/cluster/v1"
+	"reflect"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"time"
 
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/addons/setup"
@@ -43,11 +48,8 @@ import (
 	addonapiv1alpha1 "open-cluster-management.io/api/addon/v1alpha1"
 	workv1 "open-cluster-management.io/api/work/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -70,839 +72,6 @@ const (
 	ManagedClusterAddOn         = "ManagedClusterAddOn"
 	AddonApiVersion             = "addon.open-cluster-management.io/v1alpha1"
 )
-
-// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers,verbs=get;list;watch;update;patch;delete
-// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers/status,verbs=get;create;update;patch;delete
-// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers/finalizers,verbs=get;create;update;patch;delete
-
-// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups=core,resources=pods,verbs=get
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete;deletecollection
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update,resourceNames=odf-client-info
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get
-
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;create;update;delete;watch,resourceNames=spoke-clusterrole-bindings
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
-
-// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=get;create
-
-// +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests;certificatesigningrequests/approval,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve
-
-// +kubebuilder:rbac:groups=work.open-cluster-management.io,resources=manifestworks,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons/finalizers,verbs=create;update;patch;delete
-// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons/status,verbs=create;update;patch;delete
-// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=clustermanagementaddons,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=clustermanagementaddons/finalizers,verbs=update
-// +kubebuilder:rbac:groups=view.open-cluster-management.io,resources=managedclusterviews,verbs=get;list;watch;create;update;delete
-// +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
-
-// +kubebuilder:rbac:groups=console.openshift.io,resources=consoleplugins,verbs=get;create;update
-
-// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drplacementcontrols,verbs=get;list;watch
-// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=protectedapplicationviews,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=protectedapplicationviews/status,verbs=get;patch;update
-// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=placements;placementdecisions,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps.open-cluster-management.io,resources=subscriptions,verbs=get;list;watch
-// +kubebuilder:rbac:groups=app.k8s.io,resources=applications,verbs=get;list;watch
-
-// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drclusters,verbs=get;list;watch;create;update;delete
-// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drpolicies,verbs=get;list;watch
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
-func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := r.Logger.With("MirrorPeer", req.NamespacedName.String())
-	logger.Info("Reconciling request")
-	// Fetch MirrorPeer for given Request
-	var mirrorPeer multiclusterv1alpha1.MirrorPeer
-	err := r.Get(ctx, req.NamespacedName, &mirrorPeer)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
-			// Return and don't requeue
-			logger.Info("Could not find MirrorPeer. Ignoring since object must have been deleted")
-			return ctrl.Result{}, nil
-		}
-		// Error reading the object - requeue the request.
-		logger.Error("Failed to get MirrorPeer", "error", err)
-		return ctrl.Result{}, err
-	}
-
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, r.Client, r.CurrentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("ConfigMap 'odf-client-info' not found. Requeueing.")
-			return ctrl.Result{Requeue: true}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Validating MirrorPeer")
-	// Validate MirrorPeer
-	// MirrorPeer.Spec must be defined
-	if err := undefinedMirrorPeerSpec(mirrorPeer.Spec); err != nil {
-		logger.Error("MirrorPeer spec is undefined", "error", err)
-		return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-	}
-	// MirrorPeer.Spec.Items must be unique
-	if err := uniqueSpecItems(mirrorPeer.Spec); err != nil {
-		logger.Error("MirrorPeer spec items are not unique", "error", err)
-		return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-	}
-	for i := range mirrorPeer.Spec.Items {
-		// MirrorPeer.Spec.Items must not have empty fields
-		if err := emptySpecItems(mirrorPeer.Spec.Items[i]); err != nil {
-			logger.Error("MirrorPeer spec items have empty fields", "error", err)
-			return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-		}
-		// MirrorPeer.Spec.Items[*].ClusterName must be a valid ManagedCluster
-		if err := isManagedCluster(ctx, r.Client, mirrorPeer.Spec.Items[i].ClusterName); err != nil {
-			logger.Error("Invalid ManagedCluster", "ClusterName", mirrorPeer.Spec.Items[i].ClusterName, "error", err)
-			return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-		}
-		// MirrorPeer.Spec.Items[*].StorageClusterRef must have a compatible version
-		if err := isVersionCompatible(mirrorPeer.Spec.Items[i], clientInfoMap.Data); err != nil {
-			logger.Error("Can not reconcile MirrorPeer", "error", err)
-			mirrorPeer.Status.Phase = multiclusterv1alpha1.IncompatibleVersion
-			return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-		} else {
-			if mirrorPeer.Status.Phase == multiclusterv1alpha1.IncompatibleVersion {
-				mirrorPeer.Status.Phase = ""
-				mirrorPeer.Status.Message = ""
-			}
-		}
-	}
-	logger.Info("All validations for MirrorPeer passed")
-
-	if mirrorPeer.GetDeletionTimestamp().IsZero() {
-		if !utils.ContainsString(mirrorPeer.GetFinalizers(), mirrorPeerFinalizer) {
-			logger.Info("Finalizer not found on MirrorPeer. Adding Finalizer")
-			mirrorPeer.Finalizers = append(mirrorPeer.Finalizers, mirrorPeerFinalizer)
-		}
-	} else {
-		logger.Info("Deleting MirrorPeer")
-		mirrorPeer.Status.Phase = multiclusterv1alpha1.Deleting
-		statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
-		if statusErr != nil {
-			logger.Error("Error occurred while updating the status of mirrorpeer", "Error", statusErr)
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		if utils.ContainsString(mirrorPeer.GetFinalizers(), mirrorPeerFinalizer) {
-			var drpolicyList ramenv1alpha1.DRPolicyList
-			err := r.Client.List(ctx, &drpolicyList)
-			if err != nil {
-				logger.Error("Failed to delete resources", "error", err)
-				return reconcile.Result{}, err
-			}
-
-			for i := range drpolicyList.Items {
-				drClusters := drpolicyList.Items[i].Spec.DRClusters
-				if (mirrorPeer.Spec.Items[0].ClusterName == drClusters[0] &&
-					mirrorPeer.Spec.Items[1].ClusterName == drClusters[1]) ||
-					(mirrorPeer.Spec.Items[0].ClusterName == drClusters[1] &&
-						mirrorPeer.Spec.Items[1].ClusterName == drClusters[0]) {
-					return reconcile.Result{}, fmt.Errorf("DRPolicy '%s' exists and requires MirrorPeer '%s'. MirrorPeer can not be deleted",
-						drpolicyList.Items[i].Name, mirrorPeer.Name)
-				}
-			}
-
-			if utils.ContainsSuffix(mirrorPeer.GetFinalizers(), addons.SpokeMirrorPeerFinalizer) {
-				logger.Info("Waiting for agent to delete resources")
-				return reconcile.Result{Requeue: true}, err
-			}
-
-			if err := deleteManagedClusterAddon(ctx, r.Client, r.Scheme, r.CurrentNamespace, mirrorPeer); err != nil {
-				logger.Error("Failed to delete ManagedClusterAddon", "error", err)
-				return reconcile.Result{}, err
-			}
-
-			if err := r.deleteSecrets(ctx, mirrorPeer); err != nil {
-				logger.Error("Failed to delete resources", "error", err)
-				return reconcile.Result{Requeue: true}, err
-			}
-
-			mirrorPeer.Finalizers = utils.RemoveString(mirrorPeer.Finalizers, mirrorPeerFinalizer)
-			if err := r.Client.Update(ctx, &mirrorPeer); err != nil {
-				logger.Error("Failed to remove finalizer from MirrorPeer", "error", err)
-				return reconcile.Result{}, err
-			}
-		}
-		logger.Info("MirrorPeer deleted, skipping reconcilation")
-		return reconcile.Result{}, nil
-	}
-
-	mirrorPeerCopy := mirrorPeer.DeepCopy()
-	if mirrorPeerCopy.Labels == nil {
-		mirrorPeerCopy.Labels = make(map[string]string)
-	}
-
-	if val, ok := mirrorPeerCopy.Labels[utils.HubRecoveryLabel]; !ok || val != "resource" {
-		logger.Info("Adding label to mirrorpeer for disaster recovery")
-		mirrorPeerCopy.Labels[utils.HubRecoveryLabel] = "resource"
-		err = r.Client.Update(ctx, mirrorPeerCopy)
-
-		if err != nil {
-			logger.Error("Failed to update mirrorpeer with disaster recovery label", "error", err)
-			return checkK8sUpdateErrors(err, mirrorPeerCopy, logger)
-		}
-		logger.Info("Successfully added label to mirrorpeer for disaster recovery. Requeing request...")
-		return ctrl.Result{Requeue: true}, nil
-	}
-
-	if mirrorPeer.Status.Phase == "" {
-		if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
-			mirrorPeer.Status.Phase = multiclusterv1alpha1.ExchangingSecret
-		} else {
-			mirrorPeer.Status.Phase = multiclusterv1alpha1.S3ProfileSyncing
-		}
-		statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
-		if statusErr != nil {
-			logger.Error("Error occurred while updating the status of mirrorpeer. Requeing request.", "Error ", statusErr)
-			// Requeue, but don't throw
-			return ctrl.Result{Requeue: true}, nil
-		}
-	}
-
-	// Check if the MirrorPeer contains StorageClient reference
-	hasStorageClientRef, err := utils.IsStorageClientType(ctx, r.Client, mirrorPeer, r.CurrentNamespace)
-	if err != nil {
-		logger.Error("Failed to determine if MirrorPeer contains StorageClient reference", "error", err)
-		return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-	}
-
-	if err := r.processManagedClusterAddon(ctx, mirrorPeer); err != nil {
-		logger.Error("Failed to process managedclusteraddon", "error", err)
-		return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-	}
-
-	// update s3 profile when MirrorPeer changes
-	if mirrorPeer.Spec.ManageS3 {
-		for _, peerRef := range mirrorPeer.Spec.Items {
-			var s3Secret corev1.Secret
-			var secretName string
-			var namespace string
-
-			if hasStorageClientRef {
-				s3SecretName, s3SecretNamespace, err := GetNamespacedNameForClientS3Secret(ctx, r.Client, r.CurrentNamespace, peerRef, &mirrorPeer)
-				if err != nil {
-					return ctrl.Result{}, fmt.Errorf("failed to get namespace for s3 secret %w", err)
-				}
-				secretName = s3SecretName
-				namespace = s3SecretNamespace
-			} else {
-				secretName = utils.GetSecretNameByPeerRef(peerRef, utils.S3ProfilePrefix)
-				namespace = peerRef.ClusterName
-			}
-
-			namespacedName := types.NamespacedName{
-				Name:      secretName,
-				Namespace: namespace,
-			}
-			err = r.Client.Get(ctx, namespacedName, &s3Secret)
-			if err != nil {
-				if k8serrors.IsNotFound(err) {
-					logger.Info("S3 secret is not yet synchronised. retrying till it is available. Requeing request...", "Secret Name", secretName, "Namespace/Cluster", namespace)
-					return ctrl.Result{Requeue: true}, nil
-				}
-				logger.Error("Error in fetching s3 internal secret", "Cluster", peerRef.ClusterName, "error", err)
-				return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-			}
-
-			err = utils.CreateOrUpdateSecretsFromInternalSecret(ctx, r.Client, r.Scheme, r.CurrentNamespace, &s3Secret, mirrorPeer, logger)
-			if err != nil {
-				logger.Error("Error in updating S3 profile", "Cluster", peerRef.ClusterName, "error", err)
-				return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-			}
-
-			err = r.createDRClusters(ctx, peerRef.ClusterName, s3Secret, mirrorPeer)
-			if err != nil {
-				if k8serrors.IsNotFound(err) {
-					logger.Info("Secret not synchronised yet, retrying to create DRCluster", "MirrorPeer", mirrorPeer.Name)
-					return ctrl.Result{Requeue: true}, nil
-				}
-				logger.Error("Failed to create DRClusters for MirrorPeer", "error", err)
-				return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, 0, err)
-			}
-		}
-	}
-
-	if hasStorageClientRef && mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
-		result, err := createStorageClusterPeer(ctx, r.Client, logger, r.CurrentNamespace, mirrorPeer)
-		if err != nil {
-			logger.Error("Failed to create StorageClusterPeer", "error", err)
-
-			return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, result.RequeueAfter, err)
-		}
-
-		result, err = createManifestWorkForClusterPairingConfigMap(ctx, r.Client, logger, r.CurrentNamespace, mirrorPeer)
-		if err != nil {
-			logger.Error("Failed to create ManifestWork for ClusterPairingConfigMap", "error", err)
-			return r.updateMirrorPeerStatusMessage(ctx, mirrorPeer, result.RequeueAfter, err)
-		}
-	}
-
-	return r.updateMirrorPeerStatus(ctx, mirrorPeer, hasStorageClientRef)
-}
-
-func createManifestWorkForClusterPairingConfigMap(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer multiclusterv1alpha1.MirrorPeer) (ctrl.Result, error) {
-	logger.Info("Starting to create ManifestWork for cluster pairing ConfigMap")
-
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("Client info ConfigMap not found; requeuing for later retry")
-			return ctrl.Result{Requeue: true}, nil
-		}
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Fetched client info ConfigMap successfully")
-	items := mirrorPeer.Spec.Items
-
-	ci1, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(items[0].ClusterName, items[0].StorageClusterRef.Name))
-	if err != nil {
-		logger.Error("Failed to get client info from ConfigMap for the first cluster")
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Fetched client info for the first cluster", "ClientInfo", ci1)
-
-	ci2, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(items[1].ClusterName, items[1].StorageClusterRef.Name))
-	if err != nil {
-		logger.Error("Failed to get client info from ConfigMap for the second cluster")
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Fetched client info for the second cluster", "ClientInfo", ci2)
-	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient1", ci1.ClientID, "PairedClient1", ci2.ClientID)
-	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci1, ci2); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient2", ci2.ClientID, "PairedClient2", ci1.ClientID)
-	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci2, ci1); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	logger.Info("Successfully created ManifestWork for cluster pairing ConfigMap")
-	return ctrl.Result{}, nil
-}
-
-// updateProviderConfigMap updates the ConfigMap on the provider with the new client pairing
-func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client client.Client, mirrorPeer multiclusterv1alpha1.MirrorPeer, providerClientInfo utils.ClientInfo, pairedClientInfo utils.ClientInfo) error {
-	providerName := providerClientInfo.ProviderInfo.ProviderManagedClusterName
-	manifestWorkName := "storage-client-mapping"
-	manifestWorkNamespace := providerName
-
-	logger.Info("Fetching existing ManifestWork for provider", "Namespace", manifestWorkNamespace)
-	manifestWork, err := utils.GetManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace)
-	var configMap *corev1.ConfigMap
-
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("ManifestWork not found; creating a new ConfigMap")
-			configMap = &corev1.ConfigMap{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "ConfigMap",
-					APIVersion: corev1.SchemeGroupVersion.String(),
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "storage-client-mapping",
-					Namespace: providerClientInfo.ProviderInfo.NamespacedName.Namespace,
-					Annotations: map[string]string{
-						utils.StorageClusterPeerNameAnnotationKey: getStorageClusterPeerName(pairedClientInfo.ProviderInfo.ProviderManagedClusterName),
-					},
-				},
-				Data: make(map[string]string),
-			}
-		} else {
-			return fmt.Errorf("failed to get ManifestWork: %w", err)
-		}
-	} else {
-		logger.Info("Found existing ManifestWork, decoding ConfigMap")
-		if len(manifestWork.Spec.Workload.Manifests) == 0 {
-			return fmt.Errorf("ManifestWork %s has no manifests", manifestWorkName)
-		}
-		objJson := manifestWork.Spec.Workload.Manifests[0].RawExtension.Raw
-		configMap, err = utils.DecodeConfigMap(objJson)
-		if err != nil {
-			return fmt.Errorf("failed to decode ConfigMap: %w", err)
-		}
-	}
-
-	logger.Info("Updating ConfigMap with paired client info", "ProviderClientID", providerClientInfo.ClientID, "PairedClientID", pairedClientInfo.ClientID)
-	configMap.Data[providerClientInfo.ClientID] = pairedClientInfo.ClientID
-
-	updatedObjJson, err := json.Marshal(configMap)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated ConfigMap: %w", err)
-	}
-
-	ownerRef := metav1.OwnerReference{
-		APIVersion: mirrorPeer.APIVersion,
-		Kind:       mirrorPeer.Kind,
-		Name:       mirrorPeer.Name,
-		UID:        mirrorPeer.UID,
-	}
-
-	logger.Info("Creating or updating ManifestWork with updated ConfigMap")
-	_, err = utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace, updatedObjJson, []workv1.ManifestConfigOption{}, ownerRef)
-	if err != nil {
-		return fmt.Errorf("failed to update ManifestWork for provider %s: %w", providerName, err)
-	}
-
-	logger.Info("Successfully updated ManifestWork for provider", "ProviderName", providerName)
-	return nil
-}
-
-func createStorageClusterPeer(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer multiclusterv1alpha1.MirrorPeer) (ctrl.Result, error) {
-	logger = logger.With("MirrorPeer", mirrorPeer.Name)
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("Client info config map not found. Retrying request another time...")
-			return ctrl.Result{RequeueAfter: 0}, nil
-		}
-		return ctrl.Result{}, err
-	}
-	items := mirrorPeer.Spec.Items
-	clientInfo := make([]utils.ClientInfo, 0)
-
-	for _, item := range items {
-		logger.Info("Fetching info for client", "ClientKey", utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		logger.Info("Client Info found", "ClientInfo", ci)
-		clientInfo = append(clientInfo, ci)
-	}
-
-	for i := range items {
-		var storageClusterPeerName string
-		var oppositeClient utils.ClientInfo
-		currentClient := clientInfo[i]
-		// Provider A StorageClusterPeer contains info of Provider B endpoint and ticket, hence this
-		if i == 0 {
-			oppositeClient = clientInfo[1]
-			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
-		} else {
-			oppositeClient = clientInfo[0]
-			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
-		}
-
-		// Provider B's onboarding token will be used for Provider A's StorageClusterPeer
-		logger.Info("Fetching onboarding ticket in with name and namespace", "Name", mirrorPeer.GetUID(), "Namespace", oppositeClient.ProviderInfo.ProviderManagedClusterName)
-		onboardingToken, err := fetchOnboardingTicket(ctx, client, oppositeClient, mirrorPeer)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to fetch onboarding token for provider %s. %w", oppositeClient.ProviderInfo.ProviderManagedClusterName, err)
-		}
-
-		apiEndpoint := oppositeClient.ProviderInfo.StorageProviderPublicEndpoint
-		if apiEndpoint == "" {
-			logger.Error("'StorageProviderPublicEndpoint' not found. Using 'StorageProviderEndpoint' instead. It might not be accessible externally.")
-			apiEndpoint = oppositeClient.ProviderInfo.StorageProviderEndpoint
-		}
-
-		storageClusterPeer := ocsv1.StorageClusterPeer{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "StorageClusterPeer",
-				APIVersion: ocsv1.GroupVersion.String(),
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: storageClusterPeerName,
-				// This provider A namespace on which the Storage object exists
-				Namespace: currentClient.ProviderInfo.NamespacedName.Namespace,
-			},
-			Spec: ocsv1.StorageClusterPeerSpec{
-				OnboardingToken: onboardingToken,
-				ApiEndpoint:     apiEndpoint,
-			},
-		}
-		storageClusterPeerJson, err := json.Marshal(storageClusterPeer)
-		if err != nil {
-			logger.Error("Failed to marshal StorageClusterPeer to JSON", "StorageClusterPeer", storageClusterPeerName)
-			return ctrl.Result{}, err
-		}
-
-		ownerRef := metav1.OwnerReference{
-			APIVersion: mirrorPeer.APIVersion,
-			Kind:       mirrorPeer.Kind,
-			Name:       mirrorPeer.Name,
-			UID:        mirrorPeer.UID,
-		}
-
-		// ManifestWork created for Provider A will be called storageclusterpeer-{ProviderA} since that is where Manifests will be applied
-		// Provider names are unique hence only 1 ManifestWork per ProviderCluster
-		manifestWorkName := fmt.Sprintf("storageclusterpeer-%s", currentClient.ProviderInfo.ProviderManagedClusterName)
-
-		// The namespace of Provider A is where this ManifestWork will be created on the hub
-		namespace := currentClient.ProviderInfo.ProviderManagedClusterName
-
-		manifesConfigOption := []workv1.ManifestConfigOption{
-			{
-				ResourceIdentifier: workv1.ResourceIdentifier{
-					Group:     ocsv1.GroupVersion.Group,
-					Resource:  "storageclusterpeers",
-					Name:      storageClusterPeer.Name,
-					Namespace: storageClusterPeer.Namespace,
-				},
-				FeedbackRules: []workv1.FeedbackRule{
-					{
-						Type: workv1.JSONPathsType,
-						JsonPaths: []workv1.JsonPath{
-							{
-								Name: "state",
-								Path: ".status.state",
-							},
-						},
-					},
-				},
-			},
-		}
-		operationResult, err := utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, namespace, storageClusterPeerJson, manifesConfigOption, ownerRef)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		logger.Info(fmt.Sprintf("ManifestWork was %s for StorageClusterPeer %s", operationResult, storageClusterPeerName))
-	}
-
-	return ctrl.Result{}, nil
-}
-
-func fetchOnboardingTicket(ctx context.Context, client client.Client, clientInfo utils.ClientInfo, mirrorPeer multiclusterv1alpha1.MirrorPeer) (string, error) {
-	secretName := string(mirrorPeer.GetUID())
-	secretNamespace := clientInfo.ProviderInfo.ProviderManagedClusterName
-	tokenSecret, err := utils.FetchSecretWithName(ctx, client, types.NamespacedName{Name: secretName, Namespace: secretNamespace})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return "", fmt.Errorf("secret %s not found in namespace %s", secretName, secretNamespace)
-		}
-		return "", fmt.Errorf("failed to fetch secret %s in namespace %s", secretName, secretNamespace)
-	}
-
-	tokenData, exists := tokenSecret.Data[utils.SecretDataKey]
-	if !exists {
-		return "", fmt.Errorf("token data not found in secret %s", secretName)
-	}
-	return string(tokenData), nil
-}
-
-func getStorageClusterPeerName(providerClusterName string) string {
-	// Provider A will have SCP named {ProviderB}-peer
-	return fmt.Sprintf("%s-peer", providerClusterName)
-}
-
-type ManagedClusterAddonConfig struct {
-	// Namespace on the managedCluster where it will be deployed
-	InstallNamespace string
-
-	// Name of the MCA
-	Name string
-
-	// Namespace on the hub where MCA will be created, it represents the Managed cluster where the addons will be deployed
-	Namespace string
-}
-
-func getConfig(ctx context.Context, c client.Client, currentNamespace string, mp multiclusterv1alpha1.MirrorPeer) ([]ManagedClusterAddonConfig, error) {
-	managedClusterAddonsConfig := make([]ManagedClusterAddonConfig, 0)
-
-	// Check if the MirrorPeer contains StorageClient reference
-	hasStorageClientRef, err := utils.IsStorageClientType(ctx, c, mp, currentNamespace)
-	if err != nil {
-		return []ManagedClusterAddonConfig{}, err
-	}
-
-	if hasStorageClientRef {
-		clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, c, currentNamespace)
-		if err != nil {
-			return []ManagedClusterAddonConfig{}, err
-		}
-		for _, item := range mp.Spec.Items {
-			clientName := item.StorageClusterRef.Name
-			clientInfo, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(item.ClusterName, clientName))
-			if err != nil {
-				return []ManagedClusterAddonConfig{}, err
-			}
-			config := ManagedClusterAddonConfig{
-				Name:             setup.TokenExchangeName,
-				Namespace:        clientInfo.ProviderInfo.ProviderManagedClusterName,
-				InstallNamespace: clientInfo.ProviderInfo.NamespacedName.Namespace,
-			}
-			managedClusterAddonsConfig = append(managedClusterAddonsConfig, config)
-		}
-	} else {
-		for _, item := range mp.Spec.Items {
-			managedClusterAddonsConfig = append(managedClusterAddonsConfig, ManagedClusterAddonConfig{
-				Name:             setup.TokenExchangeName,
-				Namespace:        item.ClusterName,
-				InstallNamespace: item.StorageClusterRef.Namespace,
-			})
-		}
-	}
-	return managedClusterAddonsConfig, nil
-}
-
-func deleteManagedClusterAddon(ctx context.Context, client client.Client, scheme *runtime.Scheme, currentNamespace string, mirrorPeer multiclusterv1alpha1.MirrorPeer) error {
-	addonConfigs, err := getConfig(ctx, client, currentNamespace, mirrorPeer)
-	if err != nil {
-		return fmt.Errorf("failed to get managedclusteraddon config %w", err)
-	}
-
-	// Get the ClusterManagementAddOn
-	var clusterManagementAddOn addonapiv1alpha1.ClusterManagementAddOn
-
-	err = client.Get(ctx, types.NamespacedName{Name: setup.TokenExchangeName}, &clusterManagementAddOn)
-	if err != nil {
-		return err
-	}
-
-	CMARefs := []metav1.OwnerReference{
-		{
-			APIVersion:         AddonApiVersion,
-			Kind:               ClusterManagementAddOn,
-			Name:               clusterManagementAddOn.GetName(),
-			UID:                clusterManagementAddOn.GetUID(),
-			BlockOwnerDeletion: ptr.To(true),
-			Controller:         ptr.To(true),
-		},
-	}
-
-	deleteCMA := false
-
-	for _, config := range addonConfigs {
-		var managedClusterAddOn addonapiv1alpha1.ManagedClusterAddOn
-		namespacedName := types.NamespacedName{
-			Name:      config.Name,
-			Namespace: config.Namespace,
-		}
-
-		err := client.Get(ctx, namespacedName, &managedClusterAddOn)
-		if err != nil {
-			return err
-		}
-
-		refs := []metav1.OwnerReference{
-			{
-				APIVersion:         AddonApiVersion,
-				Kind:               ManagedClusterAddOn,
-				Name:               mirrorPeer.GetName(),
-				UID:                mirrorPeer.GetUID(),
-				BlockOwnerDeletion: ptr.To(true),
-				Controller:         ptr.To(true),
-			},
-		}
-
-		found, err := controllerutil.HasOwnerReference(refs, &managedClusterAddOn, scheme)
-		if err != nil {
-			return err
-		}
-
-		if found {
-			err = controllerutil.RemoveOwnerReference(&mirrorPeer, &managedClusterAddOn, scheme)
-			if err != nil {
-				return err
-			}
-		}
-
-		err = client.Get(ctx, namespacedName, &managedClusterAddOn)
-		if err != nil {
-			return err
-		}
-
-		if len(managedClusterAddOn.GetOwnerReferences()) == 1 {
-			foundCMA, err := controllerutil.HasOwnerReference(CMARefs, &managedClusterAddOn, scheme)
-			if err != nil {
-				return err
-			}
-
-			if foundCMA {
-				deleteCMA = true
-				err = client.Delete(ctx, &managedClusterAddOn)
-				if err != nil {
-					return err
-				}
-			} else {
-				return fmt.Errorf("expected last ownerRef to be ClusterManagementAddons %q for ManagedClusterAddOn %q before deleting", clusterManagementAddOn.Name, managedClusterAddOn.Name)
-			}
-		}
-	}
-
-	// Delete the ClusterManagementAddOn, if the ManagedClusterAddons is deleted above
-	if deleteCMA {
-		if err = client.Delete(ctx, &clusterManagementAddOn); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// processManagedClusterAddon creates an addon for the cluster management in all the peer refs,
-// the resources gets an owner ref of the mirrorpeer to let the garbage collector handle it if the mirrorpeer gets deleted
-func (r *MirrorPeerReconciler) processManagedClusterAddon(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer) error {
-	logger := r.Logger.With("MirrorPeer", mirrorPeer.Name)
-	logger.Info("Processing ManagedClusterAddons for MirrorPeer")
-
-	clusterManagementAddOn := addonapiv1alpha1.ClusterManagementAddOn{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: setup.TokenExchangeName,
-		},
-		Spec: addonapiv1alpha1.ClusterManagementAddOnSpec{
-			AddOnMeta: addonapiv1alpha1.AddOnMeta{
-				DisplayName: setup.TokenExchangeName,
-				Description: setup.TokenExchangeName,
-			},
-			InstallStrategy: addonapiv1alpha1.InstallStrategy{
-				Type: "Manual",
-			},
-		},
-	}
-
-	logger.Info("Creating ClusterManagementAddOn for ManagedClusterAddons", "Name", clusterManagementAddOn.Name)
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &clusterManagementAddOn, func() error {
-		if clusterManagementAddOn.Annotations == nil {
-			clusterManagementAddOn.Annotations = make(map[string]string)
-		}
-		clusterManagementAddOn.Annotations[utils.DRModeAnnotationKey] = string(mirrorPeer.Spec.Type)
-		clusterManagementAddOn.Annotations[AddonVersionAnnotationKey] = version.Version
-		clusterManagementAddOn.Annotations[utils.HubOperatorNamespaceKey] = r.CurrentNamespace
-
-		return controllerutil.SetOwnerReference(&mirrorPeer, &clusterManagementAddOn, r.Scheme)
-	})
-
-	if err != nil {
-		logger.Error("Failed to reconcile ClusterManagementAddOn", "ClusterManagementAddOn", clusterManagementAddOn.Name, "error", err)
-		return err
-	}
-
-	addonConfigs, err := getConfig(ctx, r.Client, r.CurrentNamespace, mirrorPeer)
-	if err != nil {
-		return fmt.Errorf("failed to get managedclusteraddon config %w", err)
-	}
-
-	for _, config := range addonConfigs {
-		logger.Info("Handling ManagedClusterAddon for cluster", "ClusterName", config.Namespace)
-
-		managedClusterAddOn := addonapiv1alpha1.ManagedClusterAddOn{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      setup.TokenExchangeName,
-				Namespace: config.Namespace,
-			},
-		}
-
-		logger.Info("Installing agents on the namespace", "InstallNamespace", config.InstallNamespace)
-		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &managedClusterAddOn, func() error {
-			annotations := make(map[string]string)
-			annotations[utils.DRModeAnnotationKey] = string(mirrorPeer.Spec.Type)
-			annotations[AddonVersionAnnotationKey] = version.Version
-			annotations[utils.HubOperatorNamespaceKey] = r.CurrentNamespace
-
-			managedClusterAddOn.Annotations = annotations
-			managedClusterAddOn.Spec.InstallNamespace = config.InstallNamespace
-			return controllerutil.SetOwnerReference(&mirrorPeer, &managedClusterAddOn, r.Scheme)
-		})
-
-		if err != nil {
-			logger.Error("Failed to reconcile ManagedClusterAddOn", "ManagedClusterAddOn", klog.KRef(managedClusterAddOn.Namespace, managedClusterAddOn.Name), "error", err)
-			return err
-		}
-	}
-
-	// Wait for ManagedClusterAddon to be available
-	for _, config := range addonConfigs {
-		var managedClusterAddOn addonapiv1alpha1.ManagedClusterAddOn
-		namespacedName := types.NamespacedName{
-			Name:      config.Name,
-			Namespace: config.Namespace,
-		}
-
-		err := r.Client.Get(ctx, namespacedName, &managedClusterAddOn)
-		if err != nil {
-			return err
-		}
-
-		for _, condition := range managedClusterAddOn.Status.Conditions {
-			if condition.Type == addonapiv1alpha1.ManagedClusterAddOnConditionAvailable {
-				if condition.Status != metav1.ConditionTrue {
-					return fmt.Errorf("failed while waiting for ManagedClusterAddon %q to be available: not available yet", managedClusterAddOn.Name)
-				}
-				break
-			}
-		}
-	}
-	logger.Info("Successfully processed all ManagedClusterAddons for MirrorPeer")
-	return nil
-}
-
-// deleteSecrets checks if another mirrorpeer is using a peer ref in the mirrorpeer being deleted, if not then it
-// goes ahead and deletes all the secrets with blue, green and internal label.
-// If two mirrorpeers are pointing to the same peer ref, but only gets deleted the orphan green secret in
-// the still standing peer ref gets deleted by the mirrorpeer secret controller
-func (r *MirrorPeerReconciler) deleteSecrets(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer) error {
-	logger := r.Logger
-	logger.Info("Starting deletion of secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name)
-
-	for i, peerRef := range mirrorPeer.Spec.Items {
-		logger.Info("Checking if PeerRef is used by another MirrorPeer", "PeerRef", peerRef.ClusterName)
-
-		peerRefUsed, err := utils.DoesAnotherMirrorPeerPointToPeerRef(ctx, r.Client, &mirrorPeer.Spec.Items[i])
-		if err != nil {
-			logger.Error("Error checking if PeerRef is used by another MirrorPeer", "PeerRef", peerRef.ClusterName, "error", err)
-			return err
-		}
-
-		if !peerRefUsed {
-			logger.Info("PeerRef is not used by another MirrorPeer, proceeding to delete secrets", "PeerRef", peerRef.ClusterName)
-
-			secretLabels := []string{}
-			if mirrorPeer.Spec.ManageS3 {
-				secretLabels = append(secretLabels, string(utils.InternalLabel))
-			}
-
-			secretRequirement, err := labels.NewRequirement(utils.SecretLabelTypeKey, selection.In, secretLabels)
-			if err != nil {
-				logger.Error("Cannot create label requirement for deleting secrets", "error", err)
-				return err
-			}
-
-			secretSelector := labels.NewSelector().Add(*secretRequirement)
-			deleteOpt := client.DeleteAllOfOptions{
-				ListOptions: client.ListOptions{
-					Namespace:     mirrorPeer.Spec.Items[i].ClusterName,
-					LabelSelector: secretSelector,
-				},
-			}
-
-			var secret corev1.Secret
-			if err := r.DeleteAllOf(ctx, &secret, &deleteOpt); err != nil {
-				logger.Error("Error while deleting secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name, "PeerRef", peerRef.ClusterName, "error", err)
-			}
-
-			logger.Info("Secrets successfully deleted", "PeerRef", peerRef.ClusterName)
-		} else {
-			logger.Info("PeerRef is still used by another MirrorPeer, skipping deletion", "PeerRef", peerRef.ClusterName)
-		}
-	}
-
-	logger.Info("Completed deletion of secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name)
-	return nil
-}
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *MirrorPeerReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -993,31 +162,819 @@ func (r *MirrorPeerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// CheckK8sUpdateErrors checks what type of error occurs when trying to update a k8s object
-// and logs according to the object
-func checkK8sUpdateErrors(err error, obj client.Object, logger *slog.Logger) (ctrl.Result, error) {
-	if k8serrors.IsConflict(err) {
-		logger.Info("Object is being updated by another process. Retrying", "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
-		return ctrl.Result{Requeue: true}, nil
-	} else if k8serrors.IsNotFound(err) {
-		logger.Info("Object no longer exists. Ignoring since object must have been deleted", "Kind", obj.GetObjectKind().GroupVersionKind().Kind, "Name", obj.GetName())
-		return ctrl.Result{}, nil
-	} else if err != nil {
-		logger.Error("Failed to update object", "error", err, "Name", obj.GetName())
-		return ctrl.Result{}, err
-	}
-	return ctrl.Result{}, nil
-}
+// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers,verbs=get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers/status,verbs=get;create;update;patch;delete
+// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=mirrorpeers/finalizers,verbs=get;create;update;patch;delete
 
-func GetNamespacedNameForClientS3Secret(ctx context.Context, client client.Client, currentNamespace string, pr multiclusterv1alpha1.PeerRef, mp *multiclusterv1alpha1.MirrorPeer) (string, string, error) {
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=core,resources=pods,verbs=get
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete;deletecollection
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update,resourceNames=odf-client-info
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get
+
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;create;update;delete;watch,resourceNames=spoke-clusterrole-bindings
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=get;create
+
+// +kubebuilder:rbac:groups=certificates.k8s.io,resources=certificatesigningrequests;certificatesigningrequests/approval,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=certificates.k8s.io,resources=signers,verbs=approve
+
+// +kubebuilder:rbac:groups=work.open-cluster-management.io,resources=manifestworks,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons/finalizers,verbs=create;update;patch;delete
+// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=managedclusteraddons/status,verbs=create;update;patch;delete
+// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=clustermanagementaddons,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=addon.open-cluster-management.io,resources=clustermanagementaddons/finalizers,verbs=update
+// +kubebuilder:rbac:groups=view.open-cluster-management.io,resources=managedclusterviews,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=managedclusters,verbs=get;list;watch
+
+// +kubebuilder:rbac:groups=console.openshift.io,resources=consoleplugins,verbs=get;create;update
+
+// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drplacementcontrols,verbs=get;list;watch
+// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=protectedapplicationviews,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=multicluster.odf.openshift.io,resources=protectedapplicationviews/status,verbs=get;patch;update
+// +kubebuilder:rbac:groups=argoproj.io,resources=applicationsets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cluster.open-cluster-management.io,resources=placements;placementdecisions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps.open-cluster-management.io,resources=subscriptions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=app.k8s.io,resources=applications,verbs=get;list;watch
+
+// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drclusters,verbs=get;list;watch;create;update;delete
+// +kubebuilder:rbac:groups=ramendr.openshift.io,resources=drpolicies,verbs=get;list;watch
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
+func (r *MirrorPeerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := r.Logger.With("MirrorPeer", req.NamespacedName.String())
+	logger.Info("Reconciling request")
+	// Fetch MirrorPeer for given Request
+	mirrorPeer := &multiclusterv1alpha1.MirrorPeer{}
+	err := r.Get(ctx, req.NamespacedName, mirrorPeer)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			return "", "", fmt.Errorf("client info ConfigMap not found; requeuing for later retry %w", err)
+			// Request object not found, could have been deleted after reconcile request.
+			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
+			// Return and don't requeue
+			logger.Info("Could not find MirrorPeer. Ignoring since object must have been deleted")
+			return ctrl.Result{}, nil
 		}
-		return "", "", err
+		// Error reading the object - requeue the request.
+		logger.Error("Failed to get MirrorPeer", "error", err)
+		return ctrl.Result{}, err
 	}
-	ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(pr.ClusterName, pr.StorageClusterRef.Name))
+
+	clientInfoMap, err := utils.FetchConfigMap(ctx, r.Client, utils.ClientInfoConfigMapName, r.CurrentNamespace)
+	if err != nil {
+		logger.Error("Failed to get odf-client-info configmap", "error", err)
+		return ctrl.Result{}, err
+	}
+
+	result, reconcileErr := r.reconcilePhases(ctx, logger, mirrorPeer, clientInfoMap.Data)
+
+	mirrorPeer.Status.Message = ""
+	if reconcileErr != nil {
+		mirrorPeer.Status.Message = reconcileErr.Error()
+	}
+
+	statusErr := r.Client.Status().Update(ctx, mirrorPeer)
+	if statusErr != nil {
+		logger.Error("Failed to update Mirror Peer status", "error", statusErr)
+	}
+
+	if reconcileErr != nil {
+		return reconcile.Result{}, reconcileErr
+	} else if statusErr != nil {
+		return reconcile.Result{}, statusErr
+	}
+
+	return result, nil
+}
+
+func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (ctrl.Result, error) {
+	if err := r.validateMirrorPeer(ctx, logger, mirrorPeer, clientInfoMap); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Check if the MirrorPeer contains StorageClient reference
+	hasStorageClientRef, err := utils.IsStorageClientType(mirrorPeer, clientInfoMap)
+	if err != nil {
+		logger.Error("Failed to determine if MirrorPeer contains StorageClient reference", "error", err)
+		return ctrl.Result{}, err
+	}
+
+	if !mirrorPeer.GetDeletionTimestamp().IsZero() {
+		logger.Info("Deleting MirrorPeer")
+		mirrorPeer.Status.Phase = multiclusterv1alpha1.Deleting
+		statusErr := r.Client.Status().Update(ctx, mirrorPeer)
+		if statusErr != nil {
+			logger.Error("Error occurred while updating the status of mirrorpeer", "Error", statusErr)
+			return ctrl.Result{Requeue: true}, nil
+		}
+
+		if utils.ContainsString(mirrorPeer.GetFinalizers(), mirrorPeerFinalizer) {
+			var drpolicyList ramenv1alpha1.DRPolicyList
+			err := r.Client.List(ctx, &drpolicyList)
+			if err != nil {
+				logger.Error("Failed to delete resources", "error", err)
+				return reconcile.Result{}, err
+			}
+
+			for i := range drpolicyList.Items {
+				drClusters := drpolicyList.Items[i].Spec.DRClusters
+				if (mirrorPeer.Spec.Items[0].ClusterName == drClusters[0] &&
+					mirrorPeer.Spec.Items[1].ClusterName == drClusters[1]) ||
+					(mirrorPeer.Spec.Items[0].ClusterName == drClusters[1] &&
+						mirrorPeer.Spec.Items[1].ClusterName == drClusters[0]) {
+					return reconcile.Result{}, fmt.Errorf("DRPolicy '%s' exists and requires MirrorPeer '%s'. MirrorPeer can not be deleted",
+						drpolicyList.Items[i].Name, mirrorPeer.Name)
+				}
+			}
+
+			if utils.ContainsSuffix(mirrorPeer.GetFinalizers(), addons.SpokeMirrorPeerFinalizer) {
+				logger.Info("Waiting for agent to delete resources")
+				return reconcile.Result{Requeue: true}, err
+			}
+
+			if err := deleteManagedClusterAddon(ctx, r.Client, r.Scheme, mirrorPeer, hasStorageClientRef, clientInfoMap); err != nil {
+				logger.Error("Failed to delete ManagedClusterAddon", "error", err)
+				return reconcile.Result{}, err
+			}
+
+			if err := r.deleteSecrets(ctx, mirrorPeer); err != nil {
+				logger.Error("Failed to delete resources", "error", err)
+				return reconcile.Result{Requeue: true}, err
+			}
+
+			mirrorPeer.Finalizers = utils.RemoveString(mirrorPeer.Finalizers, mirrorPeerFinalizer)
+			if err := r.Client.Update(ctx, mirrorPeer); err != nil {
+				logger.Error("Failed to remove finalizer from MirrorPeer", "error", err)
+				return reconcile.Result{}, err
+			}
+		}
+		logger.Info("MirrorPeer deleted, skipping reconcilation")
+		return reconcile.Result{}, nil
+	}
+
+	updateRequired := false
+	if controllerutil.AddFinalizer(mirrorPeer, mirrorPeerFinalizer) {
+		logger.Info("Finalizer not found on MirrorPeer. Adding Finalizer")
+		updateRequired = true
+	}
+
+	if utils.AddLabel(mirrorPeer, utils.HubRecoveryLabel, "resource") {
+		logger.Info("Adding label to MirrorPeer for disaster recovery")
+		updateRequired = true
+	}
+
+	if updateRequired {
+		if err := r.Client.Update(ctx, mirrorPeer); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+	}
+
+	if mirrorPeer.Status.Phase == "" {
+		mirrorPeer.Status.Phase = multiclusterv1alpha1.S3ProfileSyncing
+		if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
+			mirrorPeer.Status.Phase = multiclusterv1alpha1.ExchangingSecret
+		}
+	}
+
+	if err := r.processManagedClusterAddon(ctx, mirrorPeer, hasStorageClientRef, clientInfoMap); err != nil {
+		logger.Error("Failed to process managedclusteraddon", "error", err)
+		return ctrl.Result{}, err
+	}
+
+	// update s3 profile when MirrorPeer changes
+	if mirrorPeer.Spec.ManageS3 {
+		for _, peerRef := range mirrorPeer.Spec.Items {
+			var s3Secret *corev1.Secret
+			var secretName string
+			var namespace string
+
+			if hasStorageClientRef {
+				s3SecretName, s3SecretNamespace, err := GetNamespacedNameForClientS3Secret(peerRef, mirrorPeer, clientInfoMap)
+				if err != nil {
+					return ctrl.Result{}, fmt.Errorf("failed to get namespace for s3 secret %w", err)
+				}
+				secretName = s3SecretName
+				namespace = s3SecretNamespace
+			} else {
+				secretName = utils.GetSecretNameByPeerRef(peerRef, utils.S3ProfilePrefix)
+				namespace = peerRef.ClusterName
+			}
+
+			namespacedName := types.NamespacedName{
+				Name:      secretName,
+				Namespace: namespace,
+			}
+			if err = r.Client.Get(ctx, namespacedName, s3Secret); err != nil {
+				if k8serrors.IsNotFound(err) {
+					logger.Info("S3 secret is not yet synchronised. retrying till it is available. Requeing request...", "Secret Name", secretName, "Namespace/Cluster", namespace)
+					return ctrl.Result{Requeue: true}, nil
+				}
+				logger.Error("Error in fetching s3 internal secret", "Cluster", peerRef.ClusterName, "error", err)
+				return ctrl.Result{}, err
+			}
+
+			if err = utils.CreateOrUpdateSecretsFromInternalSecret(ctx, r.Client, r.Scheme, r.CurrentNamespace, s3Secret, mirrorPeer, logger); err != nil {
+				logger.Error("Error in updating S3 profile", "Cluster", peerRef.ClusterName, "error", err)
+				return ctrl.Result{}, err
+			}
+
+			if err = r.createDRClusters(ctx, peerRef.ClusterName, s3Secret, mirrorPeer); err != nil {
+				if k8serrors.IsNotFound(err) {
+					logger.Info("Secret not synchronised yet, retrying to create DRCluster", "MirrorPeer", mirrorPeer.Name)
+					return ctrl.Result{Requeue: true}, nil
+				}
+				logger.Error("Failed to create DRClusters for MirrorPeer", "error", err)
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
+		if err := createStorageClusterPeer(ctx, r.Client, logger, mirrorPeer, clientInfoMap); err != nil {
+			logger.Error("Failed to create StorageClusterPeers", "error", err)
+			return ctrl.Result{}, err
+		}
+
+		if err := createManifestWorkForClusterPairingConfigMap(ctx, r.Client, logger, mirrorPeer, clientInfoMap); err != nil {
+			logger.Error("Failed to create ManifestWork for ClusterPairingConfigMap", "error", err)
+			return ctrl.Result{}, err
+		}
+	}
+
+	return r.updateMirrorPeerStatus(ctx, mirrorPeer, hasStorageClientRef, clientInfoMap)
+
+}
+
+func (r *MirrorPeerReconciler) validateMirrorPeer(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+	logger.Info("Validating MirrorPeer")
+	// MirrorPeer.Spec must be defined
+	if reflect.DeepEqual(mirrorPeer.Spec, multiclusterv1alpha1.MirrorPeerSpec{}) {
+		return fmt.Errorf("validation: MirrorPeer.Spec must not be empty")
+	}
+
+	// MirrorPeer.Spec.Items must be unique
+	if reflect.DeepEqual(mirrorPeer.Spec.Items[0], mirrorPeer.Spec.Items[1]) {
+		return fmt.Errorf("validation: MirrorPeer.Spec.Items fields must be unique within a MirrorPeer object")
+	}
+
+	for i := range mirrorPeer.Spec.Items {
+		peerRef := mirrorPeer.Spec.Items[i]
+		// MirrorPeer.Spec.Items must not have empty fields
+		if peerRef.ClusterName == "" || peerRef.StorageClusterRef.Name == "" {
+			return fmt.Errorf("validation: MirrorPeer.Spec.Items fields must not be empty or undefined")
+		}
+
+		managedCluster := &clusterv1.ManagedCluster{}
+		if err := r.Client.Get(ctx, types.NamespacedName{Name: peerRef.ClusterName}, managedCluster); err != nil {
+			if k8serrors.IsNotFound(err) {
+				return fmt.Errorf("validation: ManagedCluster %q not found : %q is not a managed cluster", peerRef.ClusterName, peerRef.ClusterName)
+			}
+			return fmt.Errorf("validation: unable to get ManagedCluster %q: error: %v", peerRef.ClusterName, err)
+		}
+
+		// MirrorPeer.Spec.Items[*].StorageClusterRef must have a compatible version
+		if err := isVersionCompatible(mirrorPeer.Spec.Items[i], clientInfoMap); err != nil {
+			logger.Error("Can not reconcile MirrorPeer", "error", err)
+			mirrorPeer.Status.Phase = multiclusterv1alpha1.IncompatibleVersion
+			return err
+		} else {
+			if mirrorPeer.Status.Phase == multiclusterv1alpha1.IncompatibleVersion {
+				mirrorPeer.Status.Phase = ""
+				mirrorPeer.Status.Message = ""
+			}
+		}
+	}
+	logger.Info("All validations for MirrorPeer passed")
+	return nil
+}
+
+func createManifestWorkForClusterPairingConfigMap(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+	logger.Info("Starting to create ManifestWork for cluster pairing ConfigMap")
+
+	items := mirrorPeer.Spec.Items
+	ci1, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(items[0].ClusterName, items[0].StorageClusterRef.Name))
+	if err != nil {
+		logger.Error("Failed to get client info from ConfigMap for the first cluster")
+		return err
+	}
+
+	logger.Info("Fetched client info for the first cluster", "ClientInfo", ci1)
+
+	ci2, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(items[1].ClusterName, items[1].StorageClusterRef.Name))
+	if err != nil {
+		logger.Error("Failed to get client info from ConfigMap for the second cluster")
+		return err
+	}
+
+	logger.Info("Fetched client info for the second cluster", "ClientInfo", ci2)
+	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient1", ci1.ClientID, "PairedClient1", ci2.ClientID)
+	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci1, ci2); err != nil {
+		return err
+	}
+
+	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient2", ci2.ClientID, "PairedClient2", ci1.ClientID)
+	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci2, ci1); err != nil {
+		return err
+	}
+
+	logger.Info("Successfully created ManifestWork for cluster pairing ConfigMap")
+	return nil
+}
+
+// updateProviderConfigMap updates the ConfigMap on the provider with the new client pairing
+func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client client.Client, mirrorPeer *multiclusterv1alpha1.MirrorPeer, providerClientInfo utils.ClientInfo, pairedClientInfo utils.ClientInfo) error {
+	providerName := providerClientInfo.ProviderInfo.ProviderManagedClusterName
+	manifestWorkName := "storage-client-mapping"
+	manifestWorkNamespace := providerName
+
+	logger.Info("Fetching existing ManifestWork for provider", "Namespace", manifestWorkNamespace)
+	manifestWork, err := utils.GetManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace)
+	var configMap *corev1.ConfigMap
+
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			logger.Info("ManifestWork not found; creating a new ConfigMap")
+			configMap = &corev1.ConfigMap{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "ConfigMap",
+					APIVersion: corev1.SchemeGroupVersion.String(),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "storage-client-mapping",
+					Namespace: providerClientInfo.ProviderInfo.NamespacedName.Namespace,
+					Annotations: map[string]string{
+						utils.StorageClusterPeerNameAnnotationKey: getStorageClusterPeerName(pairedClientInfo.ProviderInfo.ProviderManagedClusterName),
+					},
+				},
+				Data: make(map[string]string),
+			}
+		} else {
+			return fmt.Errorf("failed to get ManifestWork: %w", err)
+		}
+	} else {
+		logger.Info("Found existing ManifestWork, decoding ConfigMap")
+		if len(manifestWork.Spec.Workload.Manifests) == 0 {
+			return fmt.Errorf("ManifestWork %s has no manifests", manifestWorkName)
+		}
+		objJson := manifestWork.Spec.Workload.Manifests[0].RawExtension.Raw
+		configMap, err = utils.DecodeConfigMap(objJson)
+		if err != nil {
+			return fmt.Errorf("failed to decode ConfigMap: %w", err)
+		}
+	}
+
+	logger.Info("Updating ConfigMap with paired client info", "ProviderClientID", providerClientInfo.ClientID, "PairedClientID", pairedClientInfo.ClientID)
+	configMap.Data[providerClientInfo.ClientID] = pairedClientInfo.ClientID
+
+	updatedObjJson, err := json.Marshal(configMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated ConfigMap: %w", err)
+	}
+
+	ownerRef := metav1.OwnerReference{
+		APIVersion: mirrorPeer.APIVersion,
+		Kind:       mirrorPeer.Kind,
+		Name:       mirrorPeer.Name,
+		UID:        mirrorPeer.UID,
+	}
+
+	logger.Info("Creating or updating ManifestWork with updated ConfigMap")
+	_, err = utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace, updatedObjJson, []workv1.ManifestConfigOption{}, ownerRef)
+	if err != nil {
+		return fmt.Errorf("failed to update ManifestWork for provider %s: %w", providerName, err)
+	}
+
+	logger.Info("Successfully updated ManifestWork for provider", "ProviderName", providerName)
+	return nil
+}
+
+func createStorageClusterPeer(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+	items := mirrorPeer.Spec.Items
+	clientInfo := make([]utils.ClientInfo, 0)
+
+	for _, item := range items {
+		logger.Info("Fetching info for client", "ClientKey", utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
+		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
+		if err != nil {
+			return err
+		}
+		logger.Info("Client Info found", "ClientInfo", ci)
+		clientInfo = append(clientInfo, ci)
+	}
+
+	for i := range items {
+		var storageClusterPeerName string
+		var oppositeClient utils.ClientInfo
+		currentClient := clientInfo[i]
+		// Provider A StorageClusterPeer contains info of Provider B endpoint and ticket, hence this
+		if i == 0 {
+			oppositeClient = clientInfo[1]
+			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
+		} else {
+			oppositeClient = clientInfo[0]
+			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
+		}
+
+		// Provider B's onboarding token will be used for Provider A's StorageClusterPeer
+		logger.Info("Fetching onboarding ticket in with name and namespace", "Name", mirrorPeer.GetUID(), "Namespace", oppositeClient.ProviderInfo.ProviderManagedClusterName)
+		onboardingToken, err := fetchOnboardingTicket(ctx, client, oppositeClient, mirrorPeer)
+		if err != nil {
+			return fmt.Errorf("failed to fetch onboarding token for provider %s. %w", oppositeClient.ProviderInfo.ProviderManagedClusterName, err)
+		}
+
+		apiEndpoint := oppositeClient.ProviderInfo.StorageProviderPublicEndpoint
+		if apiEndpoint == "" {
+			logger.Error("'StorageProviderPublicEndpoint' not found. Using 'StorageProviderEndpoint' instead. It might not be accessible externally.")
+			apiEndpoint = oppositeClient.ProviderInfo.StorageProviderEndpoint
+		}
+
+		storageClusterPeer := ocsv1.StorageClusterPeer{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "StorageClusterPeer",
+				APIVersion: ocsv1.GroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: storageClusterPeerName,
+				// This provider A namespace on which the Storage object exists
+				Namespace: currentClient.ProviderInfo.NamespacedName.Namespace,
+			},
+			Spec: ocsv1.StorageClusterPeerSpec{
+				OnboardingToken: onboardingToken,
+				ApiEndpoint:     apiEndpoint,
+			},
+		}
+		storageClusterPeerJson, err := json.Marshal(storageClusterPeer)
+		if err != nil {
+			logger.Error("Failed to marshal StorageClusterPeer to JSON", "StorageClusterPeer", storageClusterPeerName)
+			return err
+		}
+
+		ownerRef := metav1.OwnerReference{
+			APIVersion: mirrorPeer.APIVersion,
+			Kind:       mirrorPeer.Kind,
+			Name:       mirrorPeer.Name,
+			UID:        mirrorPeer.UID,
+		}
+
+		// ManifestWork created for Provider A will be called storageclusterpeer-{ProviderA} since that is where Manifests will be applied
+		// Provider names are unique hence only 1 ManifestWork per ProviderCluster
+		manifestWorkName := fmt.Sprintf("storageclusterpeer-%s", currentClient.ProviderInfo.ProviderManagedClusterName)
+
+		// The namespace of Provider A is where this ManifestWork will be created on the hub
+		namespace := currentClient.ProviderInfo.ProviderManagedClusterName
+
+		manifesConfigOption := []workv1.ManifestConfigOption{
+			{
+				ResourceIdentifier: workv1.ResourceIdentifier{
+					Group:     ocsv1.GroupVersion.Group,
+					Resource:  "storageclusterpeers",
+					Name:      storageClusterPeer.Name,
+					Namespace: storageClusterPeer.Namespace,
+				},
+				FeedbackRules: []workv1.FeedbackRule{
+					{
+						Type: workv1.JSONPathsType,
+						JsonPaths: []workv1.JsonPath{
+							{
+								Name: "state",
+								Path: ".status.state",
+							},
+						},
+					},
+				},
+			},
+		}
+		operationResult, err := utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, namespace, storageClusterPeerJson, manifesConfigOption, ownerRef)
+		if err != nil {
+			return err
+		}
+
+		logger.Info(fmt.Sprintf("ManifestWork was %s for StorageClusterPeer %s", operationResult, storageClusterPeerName))
+	}
+
+	return nil
+}
+
+func fetchOnboardingTicket(ctx context.Context, cl client.Client, clientInfo utils.ClientInfo, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (string, error) {
+	tokenSecret := &corev1.Secret{}
+	tokenSecret.Name = string(mirrorPeer.GetUID())
+	tokenSecret.Namespace = clientInfo.ProviderInfo.ProviderManagedClusterName
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(tokenSecret), tokenSecret); err != nil {
+		return "", err
+	}
+	tokenData, exists := tokenSecret.Data[utils.SecretDataKey]
+	if !exists {
+		return "", fmt.Errorf("token data not found in secret %s", tokenSecret.Name)
+	}
+	return string(tokenData), nil
+}
+
+func getStorageClusterPeerName(providerClusterName string) string {
+	// Provider A will have SCP named {ProviderB}-peer
+	return fmt.Sprintf("%s-peer", providerClusterName)
+}
+
+type ManagedClusterAddonConfig struct {
+	// Namespace on the managedCluster where it will be deployed
+	InstallNamespace string
+
+	// Name of the MCA
+	Name string
+
+	// Namespace on the hub where MCA will be created, it represents the Managed cluster where the addons will be deployed
+	Namespace string
+}
+
+func getConfig(mp *multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool, clientInfoMap map[string]string) ([]ManagedClusterAddonConfig, error) {
+	managedClusterAddonsConfig := make([]ManagedClusterAddonConfig, 0)
+
+	if hasStorageClientRef {
+		for _, item := range mp.Spec.Items {
+			clientName := item.StorageClusterRef.Name
+			clientInfo, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(item.ClusterName, clientName))
+			if err != nil {
+				return []ManagedClusterAddonConfig{}, err
+			}
+			config := ManagedClusterAddonConfig{
+				Name:             setup.TokenExchangeName,
+				Namespace:        clientInfo.ProviderInfo.ProviderManagedClusterName,
+				InstallNamespace: clientInfo.ProviderInfo.NamespacedName.Namespace,
+			}
+			managedClusterAddonsConfig = append(managedClusterAddonsConfig, config)
+		}
+	} else {
+		for _, item := range mp.Spec.Items {
+			managedClusterAddonsConfig = append(managedClusterAddonsConfig, ManagedClusterAddonConfig{
+				Name:             setup.TokenExchangeName,
+				Namespace:        item.ClusterName,
+				InstallNamespace: item.StorageClusterRef.Namespace,
+			})
+		}
+	}
+	return managedClusterAddonsConfig, nil
+}
+
+func deleteManagedClusterAddon(ctx context.Context, client client.Client, scheme *runtime.Scheme, mirrorPeer *multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool, clientInfoMap map[string]string) error {
+	addonConfigs, err := getConfig(mirrorPeer, hasStorageClientRef, clientInfoMap)
+	if err != nil {
+		return fmt.Errorf("failed to get managedclusteraddon config %w", err)
+	}
+
+	// Get the ClusterManagementAddOn
+	var clusterManagementAddOn addonapiv1alpha1.ClusterManagementAddOn
+
+	err = client.Get(ctx, types.NamespacedName{Name: setup.TokenExchangeName}, &clusterManagementAddOn)
+	if err != nil {
+		return err
+	}
+
+	CMARefs := []metav1.OwnerReference{
+		{
+			APIVersion:         AddonApiVersion,
+			Kind:               ClusterManagementAddOn,
+			Name:               clusterManagementAddOn.GetName(),
+			UID:                clusterManagementAddOn.GetUID(),
+			BlockOwnerDeletion: ptr.To(true),
+			Controller:         ptr.To(true),
+		},
+	}
+
+	deleteCMA := false
+
+	for _, config := range addonConfigs {
+		var managedClusterAddOn addonapiv1alpha1.ManagedClusterAddOn
+		namespacedName := types.NamespacedName{
+			Name:      config.Name,
+			Namespace: config.Namespace,
+		}
+
+		err := client.Get(ctx, namespacedName, &managedClusterAddOn)
+		if err != nil {
+			return err
+		}
+
+		refs := []metav1.OwnerReference{
+			{
+				APIVersion:         AddonApiVersion,
+				Kind:               ManagedClusterAddOn,
+				Name:               mirrorPeer.GetName(),
+				UID:                mirrorPeer.GetUID(),
+				BlockOwnerDeletion: ptr.To(true),
+				Controller:         ptr.To(true),
+			},
+		}
+
+		found, err := controllerutil.HasOwnerReference(refs, &managedClusterAddOn, scheme)
+		if err != nil {
+			return err
+		}
+
+		if found {
+			err = controllerutil.RemoveOwnerReference(mirrorPeer, &managedClusterAddOn, scheme)
+			if err != nil {
+				return err
+			}
+		}
+
+		err = client.Get(ctx, namespacedName, &managedClusterAddOn)
+		if err != nil {
+			return err
+		}
+
+		if len(managedClusterAddOn.GetOwnerReferences()) == 1 {
+			foundCMA, err := controllerutil.HasOwnerReference(CMARefs, &managedClusterAddOn, scheme)
+			if err != nil {
+				return err
+			}
+
+			if foundCMA {
+				deleteCMA = true
+				err = client.Delete(ctx, &managedClusterAddOn)
+				if err != nil {
+					return err
+				}
+			} else {
+				return fmt.Errorf("expected last ownerRef to be ClusterManagementAddons %q for ManagedClusterAddOn %q before deleting", clusterManagementAddOn.Name, managedClusterAddOn.Name)
+			}
+		}
+	}
+
+	// Delete the ClusterManagementAddOn, if the ManagedClusterAddons is deleted above
+	if deleteCMA {
+		if err = client.Delete(ctx, &clusterManagementAddOn); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processManagedClusterAddon creates an addon for the cluster management in all the peer refs,
+// the resources gets an owner ref of the mirrorpeer to let the garbage collector handle it if the mirrorpeer gets deleted
+func (r *MirrorPeerReconciler) processManagedClusterAddon(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool, clientInfoMap map[string]string) error {
+	logger := r.Logger.With("MirrorPeer", mirrorPeer.Name)
+	logger.Info("Processing ManagedClusterAddons for MirrorPeer")
+
+	clusterManagementAddOn := addonapiv1alpha1.ClusterManagementAddOn{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: setup.TokenExchangeName,
+		},
+		Spec: addonapiv1alpha1.ClusterManagementAddOnSpec{
+			AddOnMeta: addonapiv1alpha1.AddOnMeta{
+				DisplayName: setup.TokenExchangeName,
+				Description: setup.TokenExchangeName,
+			},
+			InstallStrategy: addonapiv1alpha1.InstallStrategy{
+				Type: "Manual",
+			},
+		},
+	}
+
+	logger.Info("Creating ClusterManagementAddOn for ManagedClusterAddons", "Name", clusterManagementAddOn.Name)
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, &clusterManagementAddOn, func() error {
+		if clusterManagementAddOn.Annotations == nil {
+			clusterManagementAddOn.Annotations = make(map[string]string)
+		}
+		clusterManagementAddOn.Annotations[utils.DRModeAnnotationKey] = string(mirrorPeer.Spec.Type)
+		clusterManagementAddOn.Annotations[AddonVersionAnnotationKey] = version.Version
+		clusterManagementAddOn.Annotations[utils.HubOperatorNamespaceKey] = r.CurrentNamespace
+
+		return controllerutil.SetOwnerReference(mirrorPeer, &clusterManagementAddOn, r.Scheme)
+	})
+
+	if err != nil {
+		logger.Error("Failed to reconcile ClusterManagementAddOn", "ClusterManagementAddOn", clusterManagementAddOn.Name, "error", err)
+		return err
+	}
+
+	addonConfigs, err := getConfig(mirrorPeer, hasStorageClientRef, clientInfoMap)
+	if err != nil {
+		return fmt.Errorf("failed to get managedclusteraddon config %w", err)
+	}
+
+	for _, config := range addonConfigs {
+		logger.Info("Handling ManagedClusterAddon for cluster", "ClusterName", config.Namespace)
+
+		managedClusterAddOn := addonapiv1alpha1.ManagedClusterAddOn{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      setup.TokenExchangeName,
+				Namespace: config.Namespace,
+			},
+		}
+
+		logger.Info("Installing agents on the namespace", "InstallNamespace", config.InstallNamespace)
+		_, err = controllerutil.CreateOrUpdate(ctx, r.Client, &managedClusterAddOn, func() error {
+			annotations := make(map[string]string)
+			annotations[utils.DRModeAnnotationKey] = string(mirrorPeer.Spec.Type)
+			annotations[AddonVersionAnnotationKey] = version.Version
+			annotations[utils.HubOperatorNamespaceKey] = r.CurrentNamespace
+
+			managedClusterAddOn.Annotations = annotations
+			managedClusterAddOn.Spec.InstallNamespace = config.InstallNamespace
+			return controllerutil.SetOwnerReference(mirrorPeer, &managedClusterAddOn, r.Scheme)
+		})
+
+		if err != nil {
+			logger.Error("Failed to reconcile ManagedClusterAddOn", "ManagedClusterAddOn", klog.KRef(managedClusterAddOn.Namespace, managedClusterAddOn.Name), "error", err)
+			return err
+		}
+	}
+
+	// Wait for ManagedClusterAddon to be available
+	for _, config := range addonConfigs {
+		var managedClusterAddOn addonapiv1alpha1.ManagedClusterAddOn
+		namespacedName := types.NamespacedName{
+			Name:      config.Name,
+			Namespace: config.Namespace,
+		}
+
+		err := r.Client.Get(ctx, namespacedName, &managedClusterAddOn)
+		if err != nil {
+			return err
+		}
+
+		for _, condition := range managedClusterAddOn.Status.Conditions {
+			if condition.Type == addonapiv1alpha1.ManagedClusterAddOnConditionAvailable {
+				if condition.Status != metav1.ConditionTrue {
+					return fmt.Errorf("failed while waiting for ManagedClusterAddon %q to be available: not available yet", managedClusterAddOn.Name)
+				}
+				break
+			}
+		}
+	}
+	logger.Info("Successfully processed all ManagedClusterAddons for MirrorPeer")
+	return nil
+}
+
+// deleteSecrets checks if another mirrorpeer is using a peer ref in the mirrorpeer being deleted, if not then it
+// goes ahead and deletes all the secrets with blue, green and internal label.
+// If two mirrorpeers are pointing to the same peer ref, but only gets deleted the orphan green secret in
+// the still standing peer ref gets deleted by the mirrorpeer secret controller
+func (r *MirrorPeerReconciler) deleteSecrets(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer) error {
+	logger := r.Logger
+	logger.Info("Starting deletion of secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name)
+
+	for i, peerRef := range mirrorPeer.Spec.Items {
+		logger.Info("Checking if PeerRef is used by another MirrorPeer", "PeerRef", peerRef.ClusterName)
+
+		peerRefUsed, err := utils.DoesAnotherMirrorPeerPointToPeerRef(ctx, r.Client, &mirrorPeer.Spec.Items[i])
+		if err != nil {
+			logger.Error("Error checking if PeerRef is used by another MirrorPeer", "PeerRef", peerRef.ClusterName, "error", err)
+			return err
+		}
+
+		if !peerRefUsed {
+			logger.Info("PeerRef is not used by another MirrorPeer, proceeding to delete secrets", "PeerRef", peerRef.ClusterName)
+
+			secretLabels := []string{}
+			if mirrorPeer.Spec.ManageS3 {
+				secretLabels = append(secretLabels, string(utils.InternalLabel))
+			}
+
+			secretRequirement, err := labels.NewRequirement(utils.SecretLabelTypeKey, selection.In, secretLabels)
+			if err != nil {
+				logger.Error("Cannot create label requirement for deleting secrets", "error", err)
+				return err
+			}
+
+			secretSelector := labels.NewSelector().Add(*secretRequirement)
+			deleteOpt := client.DeleteAllOfOptions{
+				ListOptions: client.ListOptions{
+					Namespace:     mirrorPeer.Spec.Items[i].ClusterName,
+					LabelSelector: secretSelector,
+				},
+			}
+
+			var secret corev1.Secret
+			if err := r.DeleteAllOf(ctx, &secret, &deleteOpt); err != nil {
+				logger.Error("Error while deleting secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name, "PeerRef", peerRef.ClusterName, "error", err)
+			}
+
+			logger.Info("Secrets successfully deleted", "PeerRef", peerRef.ClusterName)
+		} else {
+			logger.Info("PeerRef is still used by another MirrorPeer, skipping deletion", "PeerRef", peerRef.ClusterName)
+		}
+	}
+
+	logger.Info("Completed deletion of secrets for MirrorPeer", "MirrorPeer", mirrorPeer.Name)
+	return nil
+}
+
+func GetNamespacedNameForClientS3Secret(pr multiclusterv1alpha1.PeerRef, mp *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (string, string, error) {
+	ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(pr.ClusterName, pr.StorageClusterRef.Name))
 	if err != nil {
 		return "", "", err
 	}
@@ -1030,34 +987,31 @@ func GetNamespacedNameForClientS3Secret(ctx context.Context, client client.Clien
 	return s3SecretName, s3SecretNamespace, nil
 }
 
-func (r *MirrorPeerReconciler) createDRClusters(ctx context.Context, name string, secret corev1.Secret, mirrorpeer multiclusterv1alpha1.MirrorPeer) error {
-	logger := r.Logger
-
-	logger.Info("Unmarshalling S3 secret", "SecretName", secret.Name)
-	st, err := utils.UnmarshalS3Secret(&secret)
+func (r *MirrorPeerReconciler) createDRClusters(ctx context.Context, name string, secret *corev1.Secret, mirrorpeer *multiclusterv1alpha1.MirrorPeer) error {
+	r.Logger.Info("Unmarshalling S3 secret", "SecretName", secret.Name)
+	st, err := utils.UnmarshalS3Secret(secret)
 	if err != nil {
-		logger.Error("Failed to unmarshal S3 secret", "error", err, "SecretName", secret.Name)
+		r.Logger.Error("Failed to unmarshal S3 secret", "error", err, "SecretName", secret.Name)
 		return err
 	}
 
-	dc := &ramenv1alpha1.DRCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-	}
+	dc := &ramenv1alpha1.DRCluster{}
+	dc.Name = name
 
-	logger.Info("Creating and updating DR clusters", "ClusterName", name)
+	r.Logger.Info("Creating and updating DR clusters", "ClusterName", name)
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, dc, func() error {
 		dc.Spec.S3ProfileName = st.S3ProfileName
-		return controllerutil.SetControllerReference(&mirrorpeer, dc, r.Scheme)
+		return controllerutil.SetControllerReference(mirrorpeer, dc, r.Scheme)
 	})
 
 	return err
 }
 
-func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirrorPeer multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool) (ctrl.Result, error) {
+func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool, clientInfoMap map[string]string) (ctrl.Result, error) {
 	logger := r.Logger
 	if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
 		if hasStorageClientRef {
-			providerModePeeringDone, err := isProviderModePeeringDone(ctx, r.Client, r.Logger, r.CurrentNamespace, &mirrorPeer)
+			providerModePeeringDone, err := isProviderModePeeringDone(ctx, r.Client, r.Logger, r.CurrentNamespace, mirrorPeer, clientInfoMap)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to check if provider mode peering is correctly done %w", err)
 			}
@@ -1066,7 +1020,7 @@ func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirro
 				logger.Info("Peering of clusters is completed", "MirrorPeer", mirrorPeer.Name)
 				mirrorPeer.Status.Phase = multiclusterv1alpha1.ExchangedSecret
 				mirrorPeer.Status.Message = ""
-				statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
+				statusErr := r.Client.Status().Update(ctx, mirrorPeer)
 				if statusErr != nil {
 					logger.Error("Error occurred while updating the status of mirrorpeer", "error", statusErr, "MirrorPeer", mirrorPeer.Name)
 					return ctrl.Result{Requeue: true}, nil
@@ -1074,7 +1028,7 @@ func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirro
 				return ctrl.Result{}, nil
 			} else {
 				mirrorPeer.Status.Phase = multiclusterv1alpha1.ExchangingSecret
-				statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
+				statusErr := r.Client.Status().Update(ctx, mirrorPeer)
 				if statusErr != nil {
 					logger.Error("Error occurred while updating the status of mirrorpeer", "error", statusErr, "MirrorPeer", mirrorPeer.Name)
 					return ctrl.Result{Requeue: true}, nil
@@ -1084,14 +1038,14 @@ func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirro
 		}
 	} else {
 		// Sync mode status update, same flow as async but for s3 profile
-		s3ProfileSynced, err := checkS3ProfileStatus(ctx, r.Client, logger, r.CurrentNamespace, mirrorPeer, hasStorageClientRef)
+		s3ProfileSynced, err := checkS3ProfileStatus(ctx, r.Client, logger, mirrorPeer, hasStorageClientRef, clientInfoMap)
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				logger.Info("S3 secrets not found; Attempting to reconcile again", "MirrorPeer", mirrorPeer.Name)
 				return ctrl.Result{Requeue: true}, nil
 			}
 			logger.Error("Error while syncing S3 Profile", "error", err, "MirrorPeer", mirrorPeer.Name)
-			statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
+			statusErr := r.Client.Status().Update(ctx, mirrorPeer)
 			if statusErr != nil {
 				logger.Error("Error occurred while updating the status of mirrorpeer", "error", statusErr, "MirrorPeer", mirrorPeer.Name)
 			}
@@ -1102,7 +1056,7 @@ func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirro
 			logger.Info("S3 Profile synced to hub", "MirrorPeer", mirrorPeer.Name)
 			mirrorPeer.Status.Phase = multiclusterv1alpha1.S3ProfileSynced
 			mirrorPeer.Status.Message = ""
-			statusErr := r.Client.Status().Update(ctx, &mirrorPeer)
+			statusErr := r.Client.Status().Update(ctx, mirrorPeer)
 			if statusErr != nil {
 				logger.Error("Error occurred while updating the status of mirrorpeer", "error", statusErr, "MirrorPeer", mirrorPeer.Name)
 				return ctrl.Result{Requeue: true}, nil
@@ -1114,37 +1068,22 @@ func (r *MirrorPeerReconciler) updateMirrorPeerStatus(ctx context.Context, mirro
 	return ctrl.Result{Requeue: true}, nil
 }
 
-// updateMirrorPeerStatusMessage updates the MirrorPeer.Status.Message with the reconcile error message
-func (r *MirrorPeerReconciler) updateMirrorPeerStatusMessage(
-	ctx context.Context,
-	mirrorPeer multiclusterv1alpha1.MirrorPeer,
-	requeueAfter time.Duration,
-	err error,
-) (ctrl.Result, error) {
-	mirrorPeer.Status.Message = err.Error()
-	if statusErr := r.Client.Status().Update(ctx, &mirrorPeer); statusErr != nil {
-		r.Logger.Error("Failed to update MirrorPeer status", "error", statusErr)
-		return ctrl.Result{RequeueAfter: time.Second}, nil
-	}
-	return ctrl.Result{RequeueAfter: requeueAfter}, err
-}
-
-func isProviderModePeeringDone(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (bool, error) {
-	isS3SecretSynced, err := checkS3ProfileStatus(ctx, client, logger, currentNamespace, *mirrorPeer, true)
+func isProviderModePeeringDone(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (bool, error) {
+	isS3SecretSynced, err := checkS3ProfileStatus(ctx, client, logger, mirrorPeer, true, clientInfoMap)
 	if err != nil {
 		logger.Error("failed to check if s3 secrets have been synced")
 		return false, err
 	}
 	logger.Info("S3 secrets sync status", "isS3SecretSynced", isS3SecretSynced)
 
-	isStorageClusterPeerManifestWorkCreated, err := checkStorageClusterPeerStatus(ctx, client, logger, currentNamespace, mirrorPeer)
+	isStorageClusterPeerManifestWorkCreated, err := checkStorageClusterPeerStatus(ctx, client, logger, mirrorPeer, clientInfoMap)
 	if err != nil {
 		logger.Error("failed to check if StorageClusterPeer have been created")
 		return false, err
 	}
 
 	logger.Info("StorageClusterPeer manifest work creation status", "isStorageClusterPeerManifestWorkCreated", isStorageClusterPeerManifestWorkCreated)
-	isClientPairingConfigMapCreated, err := checkClientPairingConfigMapStatus(ctx, client, logger, currentNamespace, mirrorPeer)
+	isClientPairingConfigMapCreated, err := checkClientPairingConfigMapStatus(ctx, client, logger, mirrorPeer, clientInfoMap)
 	if err != nil {
 		logger.Error("failed to check if client pair config map has been created")
 		return false, err
@@ -1152,56 +1091,22 @@ func isProviderModePeeringDone(ctx context.Context, client client.Client, logger
 
 	logger.Info("Client pairing ConfigMap creation status", "isClientPairingConfigMapCreated", isClientPairingConfigMapCreated)
 
-	isOnboardingTicketCreated, err := checkOnboardingTicketStatus(ctx, client, logger, currentNamespace, mirrorPeer)
-	if err != nil {
-		logger.Error("failed to check if onboarding tickets has been created")
-		return false, err
-	}
-
-	logger.Info("Onboarding ticket creation status", "isOnboardingTicketCreated", isOnboardingTicketCreated)
-
 	allChecksPassed := isS3SecretSynced &&
 		isStorageClusterPeerManifestWorkCreated &&
-		isClientPairingConfigMapCreated &&
-		isOnboardingTicketCreated
+		isClientPairingConfigMapCreated
 
 	logger.Info("Provider mode peering status", "AllChecksPassed", allChecksPassed)
 	return allChecksPassed, nil
 }
 
-func checkOnboardingTicketStatus(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (bool, error) {
-	logger = logger.With("MirrorPeer", mirrorPeer.Name)
-	clientInfoMap, err := utils.FetchClientInfoConfigMap(ctx, client, currentNamespace)
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return false, fmt.Errorf("client info config map not found")
-		}
-		return false, fmt.Errorf("failed to fetch client info config map %w", err)
-	}
-	for _, item := range mirrorPeer.Spec.Items {
-		logger.Info("Fetching info for client", "ClientKey", utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch client info from the config map %w", err)
-		}
-		logger.Info("Client Info found for checking onboarding ticket status", "ClientInfo", ci)
-		_, err = fetchOnboardingTicket(ctx, client, ci, *mirrorPeer)
-		if err != nil {
-			return false, fmt.Errorf("failed to fetch onboarding token for provider %s. %w", ci.ProviderInfo.ProviderManagedClusterName, err)
-		}
-	}
-
-	return true, nil
-}
-
-func checkS3ProfileStatus(ctx context.Context, client client.Client, logger *slog.Logger, currentNamespace string, mp multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool) (bool, error) {
+func checkS3ProfileStatus(ctx context.Context, client client.Client, logger *slog.Logger, mp *multiclusterv1alpha1.MirrorPeer, hasStorageClientRef bool, clientInfoMap map[string]string) (bool, error) {
 	logger.Info("Checking S3 profile status for each peer reference in the MirrorPeer", "MirrorPeerName", mp.Name)
 
 	for _, pr := range mp.Spec.Items {
 		var s3SecretName string
 		var s3SecretNamespace string
 		if hasStorageClientRef {
-			name, namespace, err := GetNamespacedNameForClientS3Secret(ctx, client, currentNamespace, pr, &mp)
+			name, namespace, err := GetNamespacedNameForClientS3Secret(pr, mp, clientInfoMap)
 			if err != nil {
 				return false, err
 			}
@@ -1213,8 +1118,8 @@ func checkS3ProfileStatus(ctx context.Context, client client.Client, logger *slo
 		}
 		logger.Info("Attempting to fetch S3 secret", "SecretName", s3SecretName, "Namespace", s3SecretNamespace)
 
-		_, err := utils.FetchSecretWithName(ctx, client, types.NamespacedName{Name: s3SecretName, Namespace: s3SecretNamespace})
-		if err != nil {
+		secret := &corev1.Secret{}
+		if err := client.Get(ctx, types.NamespacedName{Name: s3SecretName, Namespace: s3SecretNamespace}, secret); err != nil {
 			logger.Error("Failed to fetch S3 secret", "error", err, "SecretName", s3SecretName, "Namespace", s3SecretNamespace)
 			return false, err
 		}

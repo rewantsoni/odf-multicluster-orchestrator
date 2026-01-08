@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	routev1 "github.com/openshift/api/route/v1"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
+	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/controllers/utils"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -40,14 +40,14 @@ func (r *S3SecretReconciler) syncBlueSecretForS3(ctx context.Context, name strin
 		return fmt.Errorf("failed to retrieve the config map %q in namespace %q in managed cluster: %v", name, namespace, err)
 	}
 
-	mirrorPeer, err := utils.FetchMirrorPeerByName(ctx, r.HubClient, mirrorPeerName)
-	if err != nil {
-		r.Logger.Error("Failed to fetch  mirrorpeer", "MirrorPeer", mirrorPeerName)
-		return err
+	mirrorPeer := &multiclusterv1alpha1.MirrorPeer{}
+	mirrorPeer.Name = mirrorPeerName
+	if err := r.HubClient.Get(ctx, client.ObjectKeyFromObject(mirrorPeer), mirrorPeer); err != nil {
+		return fmt.Errorf("failed to fetch MirrorPeer %s: %w", name, err)
 	}
 
-	var storagePeerRef *v1alpha1.PeerRef
-	var storageClusterRef *v1alpha1.StorageClusterRef
+	var storagePeerRef *multiclusterv1alpha1.PeerRef
+	var storageClusterRef *multiclusterv1alpha1.StorageClusterRef
 	var s3ProfileName string
 
 	if obcType == string(CLUSTER) {

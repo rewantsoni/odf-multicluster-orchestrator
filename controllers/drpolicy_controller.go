@@ -211,7 +211,7 @@ func (r *DRPolicyReconciler) createOrUpdateManifestWorkForVRCAndVGRC(ctx context
 		vgrcList = append(vgrcList, vgrcFlatten)
 	}
 
-	cm, err := utils.FetchClientInfoConfigMap(ctx, r.HubClient, r.CurrentNamespace)
+	cm, err := utils.FetchConfigMap(ctx, r.HubClient, utils.ClientInfoConfigMapName, r.CurrentNamespace)
 	if err != nil {
 		return err
 	}

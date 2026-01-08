@@ -177,7 +177,7 @@ func updateRamenHubOperatorConfig(ctx context.Context, rc client.Client, secret 
 	return nil
 }
 
-func CreateOrUpdateSecretsFromInternalSecret(ctx context.Context, rc client.Client, scheme *runtime.Scheme, currentNamespace string, secret *corev1.Secret, mirrorPeer multiclusterv1alpha1.MirrorPeer, logger *slog.Logger) error {
+func CreateOrUpdateSecretsFromInternalSecret(ctx context.Context, rc client.Client, scheme *runtime.Scheme, currentNamespace string, secret *corev1.Secret, mirrorPeer *multiclusterv1alpha1.MirrorPeer, logger *slog.Logger) error {
 	logger.Info("Validating internal secret", "SecretName", secret.Name, "Namespace", secret.Namespace)
 
 	if err := ValidateInternalSecret(secret, InternalLabel); err != nil {
