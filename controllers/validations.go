@@ -86,9 +86,9 @@ func isVersionCompatible(peerRef multiclusterv1alpha1.PeerRef, clientInfoMap map
 	return nil
 }
 
-// checkStorageClusterPeerStatus checks if the ManifestWorks for StorageClusterPeer resources
+// isStorageClusterPeerReady checks if the ManifestWorks for StorageClusterPeer resources
 // have been created and reached the Applied status.
-func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (bool, error) {
+func isStorageClusterPeerReady(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
 	logger.Info("Checking if StorageClusterPeer ManifestWorks have been created and reached Peered status")
 
 	// Collect client information for each cluster in the MirrorPeer
@@ -99,7 +99,7 @@ func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, lo
 		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
 		if err != nil {
 			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
-			return false, err
+			return err
 		}
 		clientInfos = append(clientInfos, ci)
 	}
@@ -114,11 +114,7 @@ func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, lo
 		manifestWork := &workv1.ManifestWork{}
 		err := client.Get(ctx, types.NamespacedName{Name: manifestWorkName, Namespace: manifestWorkNamespace}, manifestWork)
 		if err != nil {
-			if k8serrors.IsNotFound(err) {
-				logger.Info("ManifestWork for StorageClusterPeer not found; it may not be created yet", "ManifestWorkName", manifestWorkName)
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to get ManifestWork for StorageClusterPeer: %w", err)
+			return fmt.Errorf("failed to get ManifestWork for StorageClusterPeer: %w", err)
 		}
 
 		// Check if the ManifestWork has been successfully applied
@@ -132,7 +128,7 @@ func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, lo
 
 		if !applied {
 			logger.Info("StorageClusterPeer ManifestWork has not reached Applied status", "ManifestWorkName", manifestWorkName)
-			return false, nil
+			return fmt.Errorf("StorageClusterPeer ManifestWork has not reached Applied status")
 		}
 		logger.Info("StorageClusterPeer ManifestWork has reached Applied status", "ManifestWorkName", manifestWorkName)
 
@@ -140,23 +136,23 @@ func checkStorageClusterPeerStatus(ctx context.Context, client client.Client, lo
 		if len(mwResourceStatusManifests) > 0 {
 			if *mwResourceStatusManifests[0].StatusFeedbacks.Values[0].Value.String != string(ocsv1.StorageClusterPeerStatePeered) {
 				logger.Info("StorageClusterPeer has not reached Peered status", "ManifestWorkName", manifestWorkName)
-				return false, nil
+				return fmt.Errorf("StorageClusterPeer has not reached Peered status")
 			}
 		} else {
 			logger.Info("StorageClusterPeer ManifestWork has not been updated with resource status yet", "ManifestWorkName", manifestWorkName)
-			return false, nil
+			return fmt.Errorf("StorageClusterPeer ManifestWork has not been updated with resource status yet")
 		}
 		logger.Info("StorageClusterPeer has reached Peered status", "ManifestWorkName", manifestWorkName)
 	}
 
 	// All ManifestWorks have been created and have Applied status
 	logger.Info("All StorageClusterPeer ManifestWorks have been created and reached Peered status")
-	return true, nil
+	return nil
 }
 
-// checkClientPairingConfigMapStatus checks if the ManifestWorks for client pairing ConfigMaps
+// isStorageClientMappingReady checks if the ManifestWorks for client pairing ConfigMaps
 // have been created and reached the Applied status.
-func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) (bool, error) {
+func isStorageClientMappingReady(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
 	logger.Info("Checking if client pairing ConfigMap ManifestWorks have been created and reached Applied status")
 
 	// Collect client information for each cluster in the MirrorPeer
@@ -167,7 +163,7 @@ func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client
 		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
 		if err != nil {
 			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
-			return false, err
+			return err
 		}
 		clientInfos = append(clientInfos, ci)
 	}
@@ -181,12 +177,7 @@ func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client
 		manifestWork := &workv1.ManifestWork{}
 		err := client.Get(ctx, types.NamespacedName{Name: manifestWorkName, Namespace: manifestWorkNamespace}, manifestWork)
 		if err != nil {
-			if k8serrors.IsNotFound(err) {
-				logger.Info("ManifestWork for client pairing ConfigMap not found; it may not be created yet",
-					"ManifestWorkName", manifestWorkName, "Namespace", manifestWorkNamespace)
-				return false, nil
-			}
-			return false, fmt.Errorf("failed to get ManifestWork for client pairing ConfigMap: %w", err)
+			return fmt.Errorf("failed to get ManifestWork for client pairing ConfigMap: %w", err)
 		}
 
 		// Check if the ManifestWork has been successfully applied
@@ -201,7 +192,7 @@ func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client
 		if !applied {
 			logger.Info("Client pairing ConfigMap ManifestWork has not reached Applied status",
 				"ManifestWorkName", manifestWorkName, "Namespace", manifestWorkNamespace)
-			return false, nil
+			return fmt.Errorf("client pairing configMap ManifestWork has not reached Applied status")
 		}
 
 		logger.Info("Client pairing ConfigMap ManifestWork has reached Applied status",
@@ -210,7 +201,7 @@ func checkClientPairingConfigMapStatus(ctx context.Context, client client.Client
 
 	// All ConfigMap ManifestWorks have been created and have Applied status
 	logger.Info("All client pairing ConfigMap ManifestWorks have been created and reached Applied status")
-	return true, nil
+	return nil
 }
 
 // ValidateTokenExchangeAgentUpdated validates that the token-exchange-agent pods on managedclusters are updated properly
