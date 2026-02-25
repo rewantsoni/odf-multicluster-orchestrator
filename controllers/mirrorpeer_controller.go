@@ -330,7 +330,7 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 				return ctrl.Result{}, err
 			}
 
-			if err = r.createDRClusters(ctx, peerRef.ClusterName, s3Secret, mirrorPeer); err != nil {
+			if err = r.createDRClusters(ctx, logger, peerRef.ClusterName, s3Secret, mirrorPeer); err != nil {
 				logger.Error("Failed to create DRClusters for MirrorPeer", "error", err)
 				mirrorPeer.Status.Message = err.Error()
 				return ctrl.Result{}, err
@@ -339,7 +339,7 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 	}
 
 	if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
-		if err := createStorageClusterPeer(ctx, r.Client, logger, mirrorPeer, clientInfoMap.Data); err != nil {
+		if err := r.createStorageClusterPeer(ctx, logger, mirrorPeer, clientInfoMap.Data); err != nil {
 			logger.Error("Failed to create StorageClusterPeer", "error", err)
 			mirrorPeer.Status.Message = err.Error()
 			return ctrl.Result{}, err
@@ -473,8 +473,7 @@ func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client cl
 	return nil
 }
 
-func createStorageClusterPeer(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
-	logger = logger.With("MirrorPeer", mirrorPeer.Name)
+func (r *MirrorPeerReconciler) createStorageClusterPeer(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
 	items := mirrorPeer.Spec.Items
 	clientInfo := make([]utils.ClientInfo, 0)
 
@@ -503,7 +502,7 @@ func createStorageClusterPeer(ctx context.Context, client client.Client, logger 
 
 		// Provider B's onboarding token will be used for Provider A's StorageClusterPeer
 		logger.Info("Fetching onboarding ticket in with name and namespace", "Name", mirrorPeer.GetUID(), "Namespace", oppositeClient.ProviderInfo.ProviderManagedClusterName)
-		onboardingToken, err := fetchOnboardingTicket(ctx, client, oppositeClient, mirrorPeer)
+		onboardingToken, err := r.fetchOnboardingTicket(ctx, oppositeClient, mirrorPeer)
 		if err != nil {
 			return fmt.Errorf("failed to fetch onboarding token for provider %s. %w", oppositeClient.ProviderInfo.ProviderManagedClusterName, err)
 		}
@@ -535,42 +534,48 @@ func createStorageClusterPeer(ctx context.Context, client client.Client, logger 
 			return err
 		}
 
-		ownerRef := metav1.OwnerReference{
-			APIVersion: mirrorPeer.APIVersion,
-			Kind:       mirrorPeer.Kind,
-			Name:       mirrorPeer.Name,
-			UID:        mirrorPeer.UID,
-		}
-
 		// ManifestWork created for Provider A will be called storageclusterpeer-{ProviderA} since that is where Manifests will be applied
 		// Provider names are unique hence only 1 ManifestWork per ProviderCluster
-		manifestWorkName := fmt.Sprintf("storageclusterpeer-%s", currentClient.ProviderInfo.ProviderManagedClusterName)
+		manifestWork := &workv1.ManifestWork{}
+		manifestWork.Name = fmt.Sprintf("storageclusterpeer-%s", currentClient.ProviderInfo.ProviderManagedClusterName)
+		manifestWork.Namespace = currentClient.ProviderInfo.ProviderManagedClusterName
 
-		// The namespace of Provider A is where this ManifestWork will be created on the hub
-		namespace := currentClient.ProviderInfo.ProviderManagedClusterName
+		operationResult, err := controllerutil.CreateOrUpdate(ctx, r.Client, manifestWork, func() error {
+			if err := controllerutil.SetOwnerReference(mirrorPeer, manifestWork, r.Client.Scheme()); err != nil {
+				return err
+			}
 
-		manifesConfigOption := []workv1.ManifestConfigOption{
-			{
-				ResourceIdentifier: workv1.ResourceIdentifier{
-					Group:     ocsv1.GroupVersion.Group,
-					Resource:  "storageclusterpeers",
-					Name:      storageClusterPeer.Name,
-					Namespace: storageClusterPeer.Namespace,
+			manifestWork.Spec.Workload.Manifests = []workv1.Manifest{
+				{
+					RawExtension: runtime.RawExtension{
+						Raw: storageClusterPeerJson,
+					},
 				},
-				FeedbackRules: []workv1.FeedbackRule{
-					{
-						Type: workv1.JSONPathsType,
-						JsonPaths: []workv1.JsonPath{
-							{
-								Name: "state",
-								Path: ".status.state",
+			}
+
+			manifestWork.Spec.ManifestConfigs = []workv1.ManifestConfigOption{
+				{
+					ResourceIdentifier: workv1.ResourceIdentifier{
+						Group:     ocsv1.GroupVersion.Group,
+						Resource:  "storageclusterpeers",
+						Name:      storageClusterPeer.Name,
+						Namespace: storageClusterPeer.Namespace,
+					},
+					FeedbackRules: []workv1.FeedbackRule{
+						{
+							Type: workv1.JSONPathsType,
+							JsonPaths: []workv1.JsonPath{
+								{
+									Name: "state",
+									Path: ".status.state",
+								},
 							},
 						},
 					},
 				},
-			},
-		}
-		operationResult, err := utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, namespace, storageClusterPeerJson, manifesConfigOption, ownerRef)
+			}
+			return nil
+		})
 		if err != nil {
 			return err
 		}
@@ -581,11 +586,11 @@ func createStorageClusterPeer(ctx context.Context, client client.Client, logger 
 	return nil
 }
 
-func fetchOnboardingTicket(ctx context.Context, client client.Client, clientInfo utils.ClientInfo, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (string, error) {
+func (r *MirrorPeerReconciler) fetchOnboardingTicket(ctx context.Context, clientInfo utils.ClientInfo, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (string, error) {
 	secretName := string(mirrorPeer.GetUID())
 	secretNamespace := clientInfo.ProviderInfo.ProviderManagedClusterName
 	tokenSecret := &corev1.Secret{}
-	if err := client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNamespace}, tokenSecret); err != nil {
+	if err := r.Client.Get(ctx, types.NamespacedName{Name: secretName, Namespace: secretNamespace}, tokenSecret); err != nil {
 		return "", fmt.Errorf("failed to fetch secret %s in namespace %s :%v", secretName, secretNamespace, err)
 	}
 
@@ -957,9 +962,7 @@ func GetNamespacedNameForClientS3Secret(pr multiclusterv1alpha1.PeerRef, mp *mul
 	return s3SecretName, s3SecretNamespace, nil
 }
 
-func (r *MirrorPeerReconciler) createDRClusters(ctx context.Context, name string, secret corev1.Secret, mirrorpeer *multiclusterv1alpha1.MirrorPeer) error {
-	logger := r.Logger
-
+func (r *MirrorPeerReconciler) createDRClusters(ctx context.Context, logger *slog.Logger, name string, secret corev1.Secret, mirrorpeer *multiclusterv1alpha1.MirrorPeer) error {
 	logger.Info("Unmarshalling S3 secret", "SecretName", secret.Name)
 	st, err := utils.UnmarshalS3Secret(&secret)
 	if err != nil {
