@@ -345,7 +345,7 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 			return ctrl.Result{}, err
 		}
 
-		if err := createManifestWorkForClusterPairingConfigMap(ctx, r.Client, logger, mirrorPeer, clientInfoMap.Data); err != nil {
+		if err := r.createStorageClientMapping(ctx, logger, mirrorPeer, clientInfoMap.Data); err != nil {
 			logger.Error("Failed to create ManifestWork for ClusterPairingConfigMap", "error", err)
 			mirrorPeer.Status.Message = err.Error()
 			return ctrl.Result{}, err
@@ -371,7 +371,7 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 	return ctrl.Result{}, nil
 }
 
-func createManifestWorkForClusterPairingConfigMap(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+func (r *MirrorPeerReconciler) createStorageClientMapping(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
 	logger.Info("Starting to create ManifestWork for cluster pairing ConfigMap")
 
 	logger.Info("Fetched client info ConfigMap successfully")
@@ -393,12 +393,12 @@ func createManifestWorkForClusterPairingConfigMap(ctx context.Context, client cl
 
 	logger.Info("Fetched client info for the second cluster", "ClientInfo", ci2)
 	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient1", ci1.ClientID, "PairedClient1", ci2.ClientID)
-	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci1, ci2); err != nil {
+	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, ci1, ci2); err != nil {
 		return err
 	}
 
 	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient2", ci2.ClientID, "PairedClient2", ci1.ClientID)
-	if err := updateProviderConfigMap(logger, ctx, client, mirrorPeer, ci2, ci1); err != nil {
+	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, ci2, ci1); err != nil {
 		return err
 	}
 
@@ -407,34 +407,37 @@ func createManifestWorkForClusterPairingConfigMap(ctx context.Context, client cl
 }
 
 // updateProviderConfigMap updates the ConfigMap on the provider with the new client pairing
-func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client client.Client, mirrorPeer *multiclusterv1alpha1.MirrorPeer, providerClientInfo utils.ClientInfo, pairedClientInfo utils.ClientInfo) error {
+func (r *MirrorPeerReconciler) updateProviderConfigMap(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, providerClientInfo utils.ClientInfo, pairedClientInfo utils.ClientInfo) error {
 	providerName := providerClientInfo.ProviderInfo.ProviderManagedClusterName
 	manifestWorkName := "storage-client-mapping"
 	manifestWorkNamespace := providerName
 
 	logger.Info("Fetching existing ManifestWork for provider", "Namespace", manifestWorkNamespace)
-	manifestWork, err := utils.GetManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace)
-	var configMap *corev1.ConfigMap
 
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			logger.Info("ManifestWork not found; creating a new ConfigMap")
-			configMap = &corev1.ConfigMap{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "ConfigMap",
-					APIVersion: corev1.SchemeGroupVersion.String(),
+	manifestWork := &workv1.ManifestWork{}
+	manifestWork.Name = manifestWorkName
+	manifestWork.Namespace = manifestWorkNamespace
+
+	configMap := &corev1.ConfigMap{}
+	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(manifestWork), manifestWork); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("failed to get ManifestWork %s: %w", client.ObjectKeyFromObject(manifestWork), err)
+	}
+
+	if manifestWork.UID == "" {
+		logger.Info("ManifestWork not found; creating a new ConfigMap")
+		configMap = &corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "ConfigMap",
+				APIVersion: corev1.SchemeGroupVersion.String(),
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      utils.StorageClientMappingConfigMapName,
+				Namespace: providerClientInfo.ProviderInfo.NamespacedName.Namespace,
+				Annotations: map[string]string{
+					utils.StorageClusterPeerNameAnnotationKey: getStorageClusterPeerName(pairedClientInfo.ProviderInfo.ProviderManagedClusterName),
 				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "storage-client-mapping",
-					Namespace: providerClientInfo.ProviderInfo.NamespacedName.Namespace,
-					Annotations: map[string]string{
-						utils.StorageClusterPeerNameAnnotationKey: getStorageClusterPeerName(pairedClientInfo.ProviderInfo.ProviderManagedClusterName),
-					},
-				},
-				Data: make(map[string]string),
-			}
-		} else {
-			return fmt.Errorf("failed to get ManifestWork: %w", err)
+			},
+			Data: make(map[string]string),
 		}
 	} else {
 		logger.Info("Found existing ManifestWork, decoding ConfigMap")
@@ -442,6 +445,7 @@ func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client cl
 			return fmt.Errorf("ManifestWork %s has no manifests", manifestWorkName)
 		}
 		objJson := manifestWork.Spec.Workload.Manifests[0].RawExtension.Raw
+		var err error
 		configMap, err = utils.DecodeConfigMap(objJson)
 		if err != nil {
 			return fmt.Errorf("failed to decode ConfigMap: %w", err)
@@ -451,21 +455,26 @@ func updateProviderConfigMap(logger *slog.Logger, ctx context.Context, client cl
 	logger.Info("Updating ConfigMap with paired client info", "ProviderClientID", providerClientInfo.ClientID, "PairedClientID", pairedClientInfo.ClientID)
 	configMap.Data[providerClientInfo.ClientID] = pairedClientInfo.ClientID
 
-	updatedObjJson, err := json.Marshal(configMap)
+	configMapInBytes, err := json.Marshal(configMap)
 	if err != nil {
 		return fmt.Errorf("failed to marshal updated ConfigMap: %w", err)
 	}
 
-	ownerRef := metav1.OwnerReference{
-		APIVersion: mirrorPeer.APIVersion,
-		Kind:       mirrorPeer.Kind,
-		Name:       mirrorPeer.Name,
-		UID:        mirrorPeer.UID,
-	}
-
 	logger.Info("Creating or updating ManifestWork with updated ConfigMap")
-	_, err = utils.CreateOrUpdateManifestWork(ctx, client, manifestWorkName, manifestWorkNamespace, updatedObjJson, []workv1.ManifestConfigOption{}, ownerRef)
-	if err != nil {
+
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, manifestWork, func() error {
+		if err := controllerutil.SetOwnerReference(mirrorPeer, manifestWork, r.Client.Scheme()); err != nil {
+			return err
+		}
+		manifestWork.Spec.Workload.Manifests = []workv1.Manifest{
+			{
+				RawExtension: runtime.RawExtension{
+					Raw: configMapInBytes,
+				},
+			},
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to update ManifestWork for provider %s: %w", providerName, err)
 	}
 
