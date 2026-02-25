@@ -32,15 +32,15 @@ type ClientInfo struct {
 }
 
 // Helper function to extract and unmarshal ClientInfo from ConfigMap
-func GetClientInfoFromConfigMap(clientInfoMap map[string]string, key string) (ClientInfo, error) {
+func GetClientInfoFromConfigMap(clientInfoMap map[string]string, key string) (*ClientInfo, error) {
 	clientInfoJSON, ok := clientInfoMap[key]
 	if !ok {
-		return ClientInfo{}, fmt.Errorf("client info for %s not found in ConfigMap", key)
+		return nil, fmt.Errorf("client info for %s not found in ConfigMap", key)
 	}
 
-	var clientInfo ClientInfo
+	clientInfo := &ClientInfo{}
 	if err := json.Unmarshal([]byte(clientInfoJSON), &clientInfo); err != nil {
-		return ClientInfo{}, fmt.Errorf("failed to unmarshal client info for %s: %v", key, err)
+		return nil, fmt.Errorf("failed to unmarshal client info for %s: %v", key, err)
 	}
 
 	return clientInfo, nil

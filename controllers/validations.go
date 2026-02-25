@@ -88,24 +88,14 @@ func isVersionCompatible(peerRef multiclusterv1alpha1.PeerRef, clientInfoMap map
 
 // isStorageClusterPeerReady checks if the ManifestWorks for StorageClusterPeer resources
 // have been created and reached the Applied status.
-func isStorageClusterPeerReady(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+func isStorageClusterPeerReady(ctx context.Context, client client.Client, logger *slog.Logger, clientInfo1, clientInfo2 *utils.ClientInfo) error {
 	logger.Info("Checking if StorageClusterPeer ManifestWorks have been created and reached Peered status")
 
-	// Collect client information for each cluster in the MirrorPeer
-	items := mirrorPeer.Spec.Items
-	clientInfos := make([]utils.ClientInfo, 0, len(items))
-	for _, item := range items {
-		clientKey := utils.GetKey(item.ClusterName, item.StorageClusterRef.Name)
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
-		if err != nil {
-			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
-			return err
-		}
-		clientInfos = append(clientInfos, ci)
-	}
+	clientInfos := []*utils.ClientInfo{clientInfo1, clientInfo2}
 
 	// Check the status of the ManifestWork for each StorageClusterPeer
-	for _, currentClient := range clientInfos {
+	for i := range clientInfos {
+		currentClient := clientInfos[i]
 		// Determine the name and namespace for the ManifestWork
 		manifestWorkName := fmt.Sprintf("storageclusterpeer-%s", currentClient.ProviderInfo.ProviderManagedClusterName)
 		manifestWorkNamespace := currentClient.ProviderInfo.ProviderManagedClusterName
@@ -152,26 +142,15 @@ func isStorageClusterPeerReady(ctx context.Context, client client.Client, logger
 
 // isStorageClientMappingReady checks if the ManifestWorks for client pairing ConfigMaps
 // have been created and reached the Applied status.
-func isStorageClientMappingReady(ctx context.Context, client client.Client, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+func isStorageClientMappingReady(ctx context.Context, client client.Client, logger *slog.Logger, clientInfo1, clientInfo2 *utils.ClientInfo) error {
 	logger.Info("Checking if client pairing ConfigMap ManifestWorks have been created and reached Applied status")
 
-	// Collect client information for each cluster in the MirrorPeer
-	items := mirrorPeer.Spec.Items
-	clientInfos := make([]utils.ClientInfo, 0, len(items))
-	for _, item := range items {
-		clientKey := utils.GetKey(item.ClusterName, item.StorageClusterRef.Name)
-		ci, err := utils.GetClientInfoFromConfigMap(clientInfoMap, clientKey)
-		if err != nil {
-			logger.Error("Failed to get client info from ConfigMap", "ClientKey", clientKey)
-			return err
-		}
-		clientInfos = append(clientInfos, ci)
-	}
-
+	clientInfos := []*utils.ClientInfo{clientInfo1, clientInfo2}
 	// Check the status of the ManifestWork for each provider's client pairing ConfigMap
-	for _, providerClient := range clientInfos {
+	for i := range clientInfos {
+		clientInfo := clientInfos[i]
 		manifestWorkName := "storage-client-mapping"
-		manifestWorkNamespace := providerClient.ProviderInfo.ProviderManagedClusterName
+		manifestWorkNamespace := clientInfo.ProviderInfo.ProviderManagedClusterName
 
 		// Fetch the ManifestWork
 		manifestWork := &workv1.ManifestWork{}

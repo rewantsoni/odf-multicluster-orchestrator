@@ -339,24 +339,39 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 	}
 
 	if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
+		items := mirrorPeer.Spec.Items
+		clientInfo1, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(items[0].ClusterName, items[0].StorageClusterRef.Name))
+		if err != nil {
+			logger.Error("Failed to get client info from ConfigMap for the first cluster")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Fetched client info for the first cluster", "ClientInfo", clientInfo1)
+
+		clientInfo2, err := utils.GetClientInfoFromConfigMap(clientInfoMap.Data, utils.GetKey(items[1].ClusterName, items[1].StorageClusterRef.Name))
+		if err != nil {
+			logger.Error("Failed to get client info from ConfigMap for the second cluster")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Fetched client info for the second cluster", "ClientInfo", clientInfo2)
+
 		if err := r.createStorageClusterPeer(ctx, logger, mirrorPeer, clientInfoMap.Data); err != nil {
 			logger.Error("Failed to create StorageClusterPeer", "error", err)
 			mirrorPeer.Status.Message = err.Error()
 			return ctrl.Result{}, err
 		}
 
-		if err := r.createStorageClientMapping(ctx, logger, mirrorPeer, clientInfoMap.Data); err != nil {
+		if err := r.createStorageClientMapping(ctx, logger, mirrorPeer, clientInfo1, clientInfo2); err != nil {
 			logger.Error("Failed to create ManifestWork for ClusterPairingConfigMap", "error", err)
 			mirrorPeer.Status.Message = err.Error()
 			return ctrl.Result{}, err
 		}
 
-		if err := isStorageClusterPeerReady(ctx, r.Client, logger, mirrorPeer, clientInfoMap.Data); err != nil {
+		if err := isStorageClusterPeerReady(ctx, r.Client, logger, clientInfo1, clientInfo2); err != nil {
 			logger.Error("failed to check if StorageClusterPeer have been created")
 			return ctrl.Result{}, err
 		}
 
-		if err := isStorageClientMappingReady(ctx, r.Client, logger, mirrorPeer, clientInfoMap.Data); err != nil {
+		if err := isStorageClientMappingReady(ctx, r.Client, logger, clientInfo1, clientInfo2); err != nil {
 			logger.Error("failed to check if client pair config map has been created")
 			return ctrl.Result{}, err
 		}
@@ -371,34 +386,15 @@ func (r *MirrorPeerReconciler) reconcilePhases(ctx context.Context, logger *slog
 	return ctrl.Result{}, nil
 }
 
-func (r *MirrorPeerReconciler) createStorageClientMapping(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
+func (r *MirrorPeerReconciler) createStorageClientMapping(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfo1, clientInfo2 *utils.ClientInfo) error {
 	logger.Info("Starting to create ManifestWork for cluster pairing ConfigMap")
-
-	logger.Info("Fetched client info ConfigMap successfully")
-	items := mirrorPeer.Spec.Items
-
-	ci1, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(items[0].ClusterName, items[0].StorageClusterRef.Name))
-	if err != nil {
-		logger.Error("Failed to get client info from ConfigMap for the first cluster")
+	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient1", clientInfo1.ClientID, "PairedClient1", clientInfo2.ClientID)
+	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, clientInfo1, clientInfo2); err != nil {
 		return err
 	}
 
-	logger.Info("Fetched client info for the first cluster", "ClientInfo", ci1)
-
-	ci2, err := utils.GetClientInfoFromConfigMap(clientInfoMap, utils.GetKey(items[1].ClusterName, items[1].StorageClusterRef.Name))
-	if err != nil {
-		logger.Error("Failed to get client info from ConfigMap for the second cluster")
-		return err
-	}
-
-	logger.Info("Fetched client info for the second cluster", "ClientInfo", ci2)
-	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient1", ci1.ClientID, "PairedClient1", ci2.ClientID)
-	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, ci1, ci2); err != nil {
-		return err
-	}
-
-	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient2", ci2.ClientID, "PairedClient2", ci1.ClientID)
-	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, ci2, ci1); err != nil {
+	logger.Info("Updating provider ConfigMap with client pairing", "ProviderClient2", clientInfo2.ClientID, "PairedClient2", clientInfo1.ClientID)
+	if err := r.updateProviderConfigMap(ctx, logger, mirrorPeer, clientInfo1, clientInfo2); err != nil {
 		return err
 	}
 
@@ -407,7 +403,7 @@ func (r *MirrorPeerReconciler) createStorageClientMapping(ctx context.Context, l
 }
 
 // updateProviderConfigMap updates the ConfigMap on the provider with the new client pairing
-func (r *MirrorPeerReconciler) updateProviderConfigMap(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, providerClientInfo utils.ClientInfo, pairedClientInfo utils.ClientInfo) error {
+func (r *MirrorPeerReconciler) updateProviderConfigMap(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, providerClientInfo *utils.ClientInfo, pairedClientInfo *utils.ClientInfo) error {
 	providerName := providerClientInfo.ProviderInfo.ProviderManagedClusterName
 	manifestWorkName := "storage-client-mapping"
 	manifestWorkNamespace := providerName
@@ -484,7 +480,7 @@ func (r *MirrorPeerReconciler) updateProviderConfigMap(ctx context.Context, logg
 
 func (r *MirrorPeerReconciler) createStorageClusterPeer(ctx context.Context, logger *slog.Logger, mirrorPeer *multiclusterv1alpha1.MirrorPeer, clientInfoMap map[string]string) error {
 	items := mirrorPeer.Spec.Items
-	clientInfo := make([]utils.ClientInfo, 0)
+	clientInfo := make([]*utils.ClientInfo, 0)
 
 	for _, item := range items {
 		logger.Info("Fetching info for client", "ClientKey", utils.GetKey(item.ClusterName, item.StorageClusterRef.Name))
@@ -502,10 +498,10 @@ func (r *MirrorPeerReconciler) createStorageClusterPeer(ctx context.Context, log
 		currentClient := clientInfo[i]
 		// Provider A StorageClusterPeer contains info of Provider B endpoint and ticket, hence this
 		if i == 0 {
-			oppositeClient = clientInfo[1]
+			oppositeClient = *clientInfo[1]
 			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
 		} else {
-			oppositeClient = clientInfo[0]
+			oppositeClient = *clientInfo[0]
 			storageClusterPeerName = getStorageClusterPeerName(oppositeClient.ProviderInfo.ProviderManagedClusterName)
 		}
 
