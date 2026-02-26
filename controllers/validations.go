@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"log/slog"
 	"reflect"
 
@@ -108,18 +109,12 @@ func isStorageClusterPeerReady(ctx context.Context, client client.Client, logger
 		}
 
 		// Check if the ManifestWork has been successfully applied
-		applied := false
-		for _, condition := range manifestWork.Status.Conditions {
-			if condition.Type == workv1.WorkApplied && condition.Status == metav1.ConditionTrue {
-				applied = true
-				break
-			}
-		}
-
-		if !applied {
+		condition := meta.FindStatusCondition(manifestWork.Status.Conditions, workv1.WorkApplied)
+		if condition == nil || condition.Status != metav1.ConditionTrue {
 			logger.Info("StorageClusterPeer ManifestWork has not reached Applied status", "ManifestWorkName", manifestWorkName)
 			return fmt.Errorf("StorageClusterPeer ManifestWork has not reached Applied status")
 		}
+
 		logger.Info("StorageClusterPeer ManifestWork has reached Applied status", "ManifestWorkName", manifestWorkName)
 
 		mwResourceStatusManifests := manifestWork.Status.ResourceStatus.Manifests
@@ -160,15 +155,8 @@ func isStorageClientMappingReady(ctx context.Context, client client.Client, logg
 		}
 
 		// Check if the ManifestWork has been successfully applied
-		applied := false
-		for _, condition := range manifestWork.Status.Conditions {
-			if condition.Type == workv1.WorkApplied && condition.Status == metav1.ConditionTrue {
-				applied = true
-				break
-			}
-		}
-
-		if !applied {
+		condition := meta.FindStatusCondition(manifestWork.Status.Conditions, workv1.WorkApplied)
+		if condition == nil || condition.Status != metav1.ConditionTrue {
 			logger.Info("Client pairing ConfigMap ManifestWork has not reached Applied status",
 				"ManifestWorkName", manifestWorkName, "Namespace", manifestWorkNamespace)
 			return fmt.Errorf("client pairing configMap ManifestWork has not reached Applied status")
