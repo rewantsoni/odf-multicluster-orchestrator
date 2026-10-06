@@ -2,6 +2,8 @@ module github.com/red-hat-storage/odf-multicluster-orchestrator
 
 go 1.25.10
 
+replace github.com/red-hat-storage/odf-multicluster-orchestrator/api => ./api
+
 require (
 	github.com/argoproj/argo-cd/v3 v3.3.10
 	github.com/blang/semver/v4 v4.0.0
@@ -15,9 +17,10 @@ require (
 	github.com/onsi/gomega v1.38.2
 	github.com/openshift/api v0.0.0-20251120040117-916c7003ed78
 	github.com/openshift/library-go v0.0.0-20240124134907-4dfbf6bc7b11
-	github.com/ramendr/ramen/api v0.0.0-20260609143232-8539a3642b6e
+	github.com/ramendr/ramen/api v0.1.0-rc1
 	github.com/red-hat-storage/ocs-operator/api/v4 v4.0.0-20260113064915-e9473b4e5f1a
 	github.com/red-hat-storage/ocs-tls-profiles/api v0.0.0-20260427105901-0c5f6d8fcd65
+	github.com/red-hat-storage/odf-multicluster-orchestrator/api v0.0.0-00010101000000-000000000000
 	github.com/rook/rook/pkg/apis v0.0.0-20260113214458-a712afae9805
 	github.com/spf13/cobra v1.10.2
 	github.com/stolostron/multicloud-operators-foundation v0.0.0-20220824091202-e9cd9710d009
@@ -30,8 +33,8 @@ require (
 	k8s.io/apiextensions-apiserver v0.34.2
 	k8s.io/apimachinery v0.35.3
 	k8s.io/client-go v0.34.2
-	k8s.io/klog/v2 v2.130.1
-	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
+	k8s.io/klog/v2 v2.140.0
+	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	open-cluster-management.io/addon-framework v0.9.2
 	open-cluster-management.io/api v0.13.0
 	open-cluster-management.io/multicloud-operators-subscription v0.16.0
@@ -88,7 +91,7 @@ require (
 	github.com/fatih/camelcase v1.0.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
@@ -200,9 +203,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
+	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.yaml.in/yaml/v2 v2.4.3 // indirect
+	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
@@ -213,6 +216,7 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
+	google.golang.org/genproto v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.83.2 // indirect
@@ -242,7 +246,7 @@ require (
 	sigs.k8s.io/kustomize/api v0.20.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.20.1 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.3.2-0.20260122202528-d9cc6641c482 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
 
 replace (

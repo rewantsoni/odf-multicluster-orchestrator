@@ -42,6 +42,18 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+godeps-update:  ## Run go mod tidy & vendor with workspace sync
+	@echo "Running godeps-update"
+	go mod tidy
+	@echo "Running godeps-update on api submodule"
+	cd api && go mod tidy
+	@echo "Syncing workspace dependencies"
+	go work sync
+
+godeps-verify: godeps-update
+	@echo "Verifying go-deps"
+	./hack/godeps-verify.sh
+
 golangci-lint: golangci-bin ## Run golangci-lint against code.
 	$(GOLANGCI_BIN) run ./...
 
