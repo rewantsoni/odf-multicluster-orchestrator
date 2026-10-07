@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	viewv1beta1 "github.com/stolostron/multicloud-operators-foundation/pkg/apis/view/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	"log/slog"
 	"time"
 
@@ -357,7 +359,7 @@ func (r *DRPolicyReconciler) createOrUpdateManifestWorkForVRCAndVGRC(ctx context
 		}
 
 		// Validate that the token-exchange-agent pods on managedclusters are updated properly before creating VGRC templates
-		if err = odf.ValidateTokenExchangeAgentUpdated(ctx, r.HubClient, logger, cInfo.ProviderInfo.ProviderManagedClusterName, r.TestEnvFile); err != nil {
+		if err = validateTokenExchangeAgentUpdated(ctx, r.HubClient, logger, cInfo.ProviderInfo.ProviderManagedClusterName, r.TestEnvFile); err != nil {
 			return err
 		}
 
@@ -467,4 +469,42 @@ func getTemplateForVGRC(vgrc replicationv1alpha1.VolumeGroupReplicationClass, vg
 	}
 
 	return vgrcTemplateJson, nil
+}
+
+// validateTokenExchangeAgentUpdated validates that the token-exchange-agent pods on managedclusters are updated properly
+func validateTokenExchangeAgentUpdated(ctx context.Context, client client.Client, logger *slog.Logger, clusterName, testEnvFile string) error {
+	var managedClusterView viewv1beta1.ManagedClusterView
+	mcvNamespacedName := types.NamespacedName{
+		Namespace: clusterName,
+		Name:      utils.GetTokenExchangeManagedClusterViewName(clusterName),
+	}
+	if err := client.Get(ctx, mcvNamespacedName, &managedClusterView); err != nil {
+		logger.Error("Failed to get ManagedClusterView", "error", err)
+		return err
+	}
+
+	tokenExchangeDep := appsv1.Deployment{}
+	if err := json.Unmarshal(managedClusterView.Status.Result.Raw, &tokenExchangeDep); err != nil {
+		return fmt.Errorf("failed to unmarshal result data. %w", err)
+	}
+
+	tokenExchangeImage := utils.GetEnv("TOKEN_EXCHANGE_IMAGE", testEnvFile)
+	tokenExchangeContainer := corev1.Container{}
+	for _, c := range tokenExchangeDep.Spec.Template.Spec.Containers {
+		if c.Name == utils.TokenExchangeDeployment {
+			tokenExchangeContainer = c
+		}
+	}
+	if tokenExchangeContainer.Name == "" {
+		return fmt.Errorf("container 'token-exchange-agent' not found in 'token-exchange-agent' deployment parsed from managedclusterview")
+	}
+	if tokenExchangeContainer.Image != tokenExchangeImage || tokenExchangeDep.Status.Replicas != 1 {
+		logger.Error("token-exchange-agent pods are not yet updated, waiting for update to complete",
+			"current token-exchange-agent image", tokenExchangeContainer.Image,
+			"expected token-exchange-agent image", tokenExchangeImage,
+			"replicas", tokenExchangeDep.Status.Replicas)
+		return utils.ErrRequeueReconcile
+	}
+
+	return nil
 }
