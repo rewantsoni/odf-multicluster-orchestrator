@@ -3,13 +3,17 @@ package controller
 import (
 	"context"
 	"crypto/tls"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/drplacement"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/drpolicy"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/protectedapplicationview"
 	"os"
 
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/addons/setup"
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/acm"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/clusterversion"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/managedcluster"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/managedclusterview"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/mirrorpeer"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/ramen"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/pkg/utils"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/version"
 
@@ -245,7 +249,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 	}
 	// +kubebuilder:scaffold:builder
 
-	if err = (&acm.ManagedClusterReconciler{
+	if err = (&managedcluster.ManagedClusterReconciler{
 		Client:           mgr.GetClient(),
 		Logger:           logger.With("controller", "acm.ManagedClusterReconciler"),
 		TestEnvFile:      o.testEnvFile,
@@ -255,7 +259,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	if err = (&acm.ManagedClusterViewReconciler{
+	if err = (&managedclusterview.ManagedClusterViewReconciler{
 		Client:           mgr.GetClient(),
 		Logger:           logger.With("controller", "acm.ManagedClusterViewReconciler"),
 		TestEnvFile:      o.testEnvFile,
@@ -265,7 +269,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	if err = (&ramen.DRPlacementControlReconciler{
+	if err = (&drplacement.DRPlacementControlReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Logger: logger.With("controller", "ramen.DRPlacementControlReconciler"),
@@ -274,7 +278,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	if err = (&ramen.ProtectedApplicationViewReconciler{
+	if err = (&protectedapplicationview.ProtectedApplicationViewReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Logger: logger.With("controller", "ramen.ProtectedApplicationViewReconciler"),
@@ -283,7 +287,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	if err = (&ClusterVersionReconciler{
+	if err = (&clusterversion.ClusterVersionReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
 		Logger:            logger.With("controller", "ClusterVersionReconciler"),
@@ -321,7 +325,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		logger.Error("Failed to add token exchange addon to addon manager", "error", err)
 	}
 
-	if err = (&ramen.DRPolicyReconciler{
+	if err = (&drpolicy.DRPolicyReconciler{
 		HubClient:        mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		Logger:           logger.With("controller", "ramen.DRPolicyReconciler"),

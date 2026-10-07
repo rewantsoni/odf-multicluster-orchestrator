@@ -28,6 +28,11 @@ const (
 	TLSProfileName   = "ocs-tls-profile"
 	TLSProfileDomain = "odf-multicluster.openshift.io"
 	TLSProfileServer = "console"
+
+	RamenAPIVersion = "ramendr.openshift.io/v1alpha1"
+	DrPolicyKind    = "DRPolicy"
+	DrPCKind        = "DRPlacementControl"
+	PlacementKind   = "Placement"
 )
 
 type OBCTypeValue string
