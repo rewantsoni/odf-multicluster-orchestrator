@@ -3,14 +3,14 @@ package controller
 import (
 	"context"
 	"crypto/tls"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/s3configuration"
 	"os"
 
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/addons/setup"
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/acm"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/odf"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/mirrorpeer"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/ramen"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/s3configuration"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/pkg/utils"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/version"
 
@@ -243,7 +243,7 @@ func (o *ManagerOptions) runManager(ctx context.Context) {
 		os.Exit(1)
 	}
 
-	if err = (&odf.MirrorPeerReconciler{
+	if err = (&mirrorpeer.MirrorPeerReconciler{
 		Client:           mgr.GetClient(),
 		Scheme:           mgr.GetScheme(),
 		Logger:           logger.With("controller", "odf.MirrorPeerReconciler"),

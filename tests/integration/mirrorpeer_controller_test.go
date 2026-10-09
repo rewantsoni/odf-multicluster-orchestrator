@@ -21,11 +21,11 @@ package integration_test
 
 import (
 	"context"
+	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/mirrorpeer"
 	"os"
 	"time"
 
 	multiclusterv1alpha1 "github.com/red-hat-storage/odf-multicluster-orchestrator/api/v1alpha1"
-	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/odf"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/pkg/utils"
 
 	. "github.com/onsi/ginkgo"
@@ -494,7 +494,7 @@ var _ = Describe("MirrorPeerReconciler Reconcile", func() {
 		It("should be able to read ManagedCluster object", func() {
 			By("providing valid ManagedCluster names", func() {
 
-				r := odf.MirrorPeerReconciler{
+				r := mirrorpeer.MirrorPeerReconciler{
 					Client:           k8sClient,
 					Scheme:           k8sClient.Scheme(),
 					Logger:           utils.GetLogger(utils.GetZapLogger(true)),
