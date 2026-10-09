@@ -416,8 +416,7 @@ func TestDeleteMirrorPeer(t *testing.T) {
 				DeletionTimestamp: &metav1.Time{Time: time.Now()},
 			},
 			Spec: multiclusterv1alpha1.MirrorPeerSpec{
-				Type:     multiclusterv1alpha1.Async,
-				ManageS3: true,
+				Type: multiclusterv1alpha1.Async,
 				Items: []multiclusterv1alpha1.PeerRef{
 					{ClusterName: "cluster1", StorageClusterRef: multiclusterv1alpha1.StorageClusterRef{Name: "test-storagecluster", Namespace: "test-namespace"}},
 					{ClusterName: "cluster2", StorageClusterRef: multiclusterv1alpha1.StorageClusterRef{Name: "test-storagecluster", Namespace: "test-namespace"}},

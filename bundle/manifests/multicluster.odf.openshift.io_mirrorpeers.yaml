@@ -90,6 +90,15 @@ spec:
               manageS3:
                 default: false
                 type: boolean
+              storageVendor:
+                default: df
+                enum:
+                - df
+                - fa
+                type: string
+                x-kubernetes-validations:
+                - message: spec.storageVendor is immutable.
+                  rule: self == oldSelf
               type:
                 default: async
                 description: Type represents the mode of DR operation (sync or async)
