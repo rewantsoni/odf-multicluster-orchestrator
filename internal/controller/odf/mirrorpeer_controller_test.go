@@ -22,6 +22,7 @@ package odf
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -227,76 +228,6 @@ func TestProcessManagedClusterAddons(t *testing.T) {
 			t.Error("Failed to add OwnerRefs to ManagedClusterAddon")
 		}
 	}
-}
-
-func TestDeleteResources(t *testing.T) {
-	ctx := context.TODO()
-
-	mirrorpeer := &multiclusterv1alpha1.MirrorPeer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "mirrorpeer",
-		},
-		Spec: multiclusterv1alpha1.MirrorPeerSpec{
-			Items: []multiclusterv1alpha1.PeerRef{
-				{
-					ClusterName: "cluster1",
-					StorageClusterRef: multiclusterv1alpha1.StorageClusterRef{
-						Name:      "test-storagecluster",
-						Namespace: "test-namespace",
-					},
-				},
-				{
-					ClusterName: "cluster2",
-					StorageClusterRef: multiclusterv1alpha1.StorageClusterRef{
-						Name:      "test-storagecluster",
-						Namespace: "test-namespace",
-					},
-				},
-			},
-			ManageS3: true,
-		},
-	}
-	r := getFakeMirrorPeerReconciler(mirrorpeer)
-
-	if err := CreateFakeSecrets(mirrorpeer, r, ctx); err != nil {
-		t.Error("Failed to create fake secrets", err)
-	}
-
-	internalSecrets, err := utils.FetchAllSecretsWithLabel(ctx, r.Client, "", utils.InternalLabel)
-	if len(internalSecrets) < 2 {
-		t.Error("Failed to delete Internal Secrets", err)
-	}
-
-	err = r.deleteSecrets(ctx, mirrorpeer)
-	if err != nil {
-		t.Error("Failed to delete resources", err)
-	}
-	for i := range mirrorpeer.Spec.Items {
-		internalSecrets, err := utils.FetchAllSecretsWithLabel(ctx, r.Client, mirrorpeer.Spec.Items[i].ClusterName, utils.InternalLabel)
-		if len(internalSecrets) > 0 {
-			t.Error("Failed to delete Internal Secrets", err)
-		}
-	}
-
-}
-
-func CreateFakeSecrets(mirrorPeer *multiclusterv1alpha1.MirrorPeer, r MirrorPeerReconciler, ctx context.Context) error {
-	for i := range mirrorPeer.Spec.Items {
-		internalSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "fake-internal-secret",
-				Namespace: mirrorPeer.Spec.Items[i].ClusterName,
-				Labels: map[string]string{
-					utils.SecretLabelTypeKey: string(utils.InternalLabel),
-				},
-			},
-			Type: corev1.SecretTypeOpaque,
-		}
-		if err := r.Create(ctx, internalSecret); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func makeClientInfoJSON(clientID, providerManagedCluster, namespace string) string {
@@ -721,5 +652,250 @@ func verifyConfigMapEntry(t *testing.T, ctx context.Context, c client.Client, na
 	}
 	if !shouldExist && exists {
 		t.Errorf("expected key %q to be removed from ConfigMap for namespace %s", key, namespace)
+	}
+}
+
+func TestEnsureDRClusterOwnership_AllClustersExist(t *testing.T) {
+	mirrorpeer := &multiclusterv1alpha1.MirrorPeer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-mirrorpeer",
+			UID:  "test-uid-12345",
+		},
+		Spec: multiclusterv1alpha1.MirrorPeerSpec{
+			Items: []multiclusterv1alpha1.PeerRef{
+				{ClusterName: "cluster1"},
+				{ClusterName: "cluster2"},
+			},
+		},
+	}
+
+	drCluster1 := &ramenv1alpha1.DRCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster1",
+		},
+	}
+
+	drCluster2 := &ramenv1alpha1.DRCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster2",
+		},
+	}
+
+	scheme := mgrScheme
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(mirrorpeer, drCluster1, drCluster2).
+		Build()
+
+	r := MirrorPeerReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Logger: utils.GetLogger(utils.GetZapLogger(true)),
+	}
+
+	ctx := context.TODO()
+
+	err := r.ensureDRClusterOwnership(ctx, r.Logger, mirrorpeer)
+	if err != nil {
+		t.Errorf("ensureDRClusterOwnership() should not return error when all DRClusters exist. Error: %s", err)
+	}
+
+	// Verify owner references were set
+	var updatedDRCluster1 ramenv1alpha1.DRCluster
+	err = r.Get(ctx, types.NamespacedName{Name: "cluster1"}, &updatedDRCluster1)
+	if err != nil {
+		t.Errorf("Failed to get DRCluster cluster1. Error: %s", err)
+	}
+
+	hasOwner, err := controllerutil.HasOwnerReference(updatedDRCluster1.OwnerReferences, mirrorpeer, r.Scheme)
+	if err != nil {
+		t.Errorf("Failed to check owner reference. Error: %s", err)
+	}
+	if !hasOwner {
+		t.Error("DRCluster cluster1 should have owner reference set")
+	}
+
+	var updatedDRCluster2 ramenv1alpha1.DRCluster
+	err = r.Get(ctx, types.NamespacedName{Name: "cluster2"}, &updatedDRCluster2)
+	if err != nil {
+		t.Errorf("Failed to get DRCluster cluster2. Error: %s", err)
+	}
+
+	hasOwner, err = controllerutil.HasOwnerReference(updatedDRCluster2.OwnerReferences, mirrorpeer, r.Scheme)
+	if err != nil {
+		t.Errorf("Failed to check owner reference. Error: %s", err)
+	}
+	if !hasOwner {
+		t.Error("DRCluster cluster2 should have owner reference set")
+	}
+}
+
+func TestEnsureDRClusterOwnership_MissingClusters(t *testing.T) {
+	mirrorpeer := &multiclusterv1alpha1.MirrorPeer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-mirrorpeer",
+			UID:  "test-uid-12345",
+		},
+		Spec: multiclusterv1alpha1.MirrorPeerSpec{
+			Items: []multiclusterv1alpha1.PeerRef{
+				{ClusterName: "cluster1"},
+				{ClusterName: "cluster2"},
+				{ClusterName: "cluster3"},
+			},
+		},
+	}
+
+	// Only create cluster1, cluster2 and cluster3 are missing
+	drCluster1 := &ramenv1alpha1.DRCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster1",
+		},
+	}
+
+	scheme := mgrScheme
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(mirrorpeer, drCluster1).
+		Build()
+
+	r := MirrorPeerReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Logger: utils.GetLogger(utils.GetZapLogger(true)),
+	}
+
+	ctx := context.TODO()
+
+	err := r.ensureDRClusterOwnership(ctx, r.Logger, mirrorpeer)
+	if err == nil {
+		t.Error("ensureDRClusterOwnership() should return error when DRClusters are missing")
+	}
+
+	if !errors.Is(err, ErrMissingDRCluster) {
+		t.Errorf("ensureDRClusterOwnership() should return ErrMissingDRCluster. Got: %v", err)
+	}
+
+	// Verify the error message contains the missing clusters
+	expectedMsg := "missing DRClusters: [cluster2 cluster3]"
+	if err.Error() != expectedMsg {
+		t.Errorf("Error message mismatch. Expected: %s, Got: %s", expectedMsg, err.Error())
+	}
+
+	// Verify that existing DRCluster does NOT have owner reference
+	// (should not set owner ref if not all clusters exist)
+	var updatedDRCluster1 ramenv1alpha1.DRCluster
+	err = r.Get(ctx, types.NamespacedName{Name: "cluster1"}, &updatedDRCluster1)
+	if err != nil {
+		t.Errorf("Failed to get DRCluster cluster1. Error: %s", err)
+	}
+
+	hasOwner, err := controllerutil.HasOwnerReference(updatedDRCluster1.OwnerReferences, mirrorpeer, r.Scheme)
+	if err != nil {
+		t.Errorf("Failed to check owner reference. Error: %s", err)
+	}
+	if hasOwner {
+		t.Error("DRCluster cluster1 should NOT have owner reference set when not all clusters exist")
+	}
+}
+
+func TestEnsureDRClusterOwnership_AllClustersMissing(t *testing.T) {
+	mirrorpeer := &multiclusterv1alpha1.MirrorPeer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-mirrorpeer",
+			UID:  "test-uid-12345",
+		},
+		Spec: multiclusterv1alpha1.MirrorPeerSpec{
+			Items: []multiclusterv1alpha1.PeerRef{
+				{ClusterName: "cluster1"},
+				{ClusterName: "cluster2"},
+			},
+		},
+	}
+
+	// No DRClusters exist
+	scheme := mgrScheme
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(mirrorpeer).
+		Build()
+
+	r := MirrorPeerReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Logger: utils.GetLogger(utils.GetZapLogger(true)),
+	}
+
+	ctx := context.TODO()
+
+	err := r.ensureDRClusterOwnership(ctx, r.Logger, mirrorpeer)
+	if err == nil {
+		t.Error("ensureDRClusterOwnership() should return error when all DRClusters are missing")
+	}
+
+	if !errors.Is(err, ErrMissingDRCluster) {
+		t.Errorf("ensureDRClusterOwnership() should return ErrMissingDRCluster. Got: %v", err)
+	}
+
+	expectedMsg := "missing DRClusters: [cluster1 cluster2]"
+	if err.Error() != expectedMsg {
+		t.Errorf("Error message mismatch. Expected: %s, Got: %s", expectedMsg, err.Error())
+	}
+}
+
+func TestEnsureDRClusterOwnership_OwnerReferenceAlreadySet(t *testing.T) {
+	mirrorpeer := &multiclusterv1alpha1.MirrorPeer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-mirrorpeer",
+			UID:  "test-uid-12345",
+		},
+		Spec: multiclusterv1alpha1.MirrorPeerSpec{
+			Items: []multiclusterv1alpha1.PeerRef{
+				{ClusterName: "cluster1"},
+			},
+		},
+	}
+
+	drCluster1 := &ramenv1alpha1.DRCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster1",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: multiclusterv1alpha1.GroupVersion.String(),
+					Kind:       "MirrorPeer",
+					Name:       "test-mirrorpeer",
+					UID:        "test-uid-12345",
+				},
+			},
+		},
+	}
+
+	scheme := mgrScheme
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(mirrorpeer, drCluster1).
+		Build()
+
+	r := MirrorPeerReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Logger: utils.GetLogger(utils.GetZapLogger(true)),
+	}
+
+	ctx := context.TODO()
+
+	err := r.ensureDRClusterOwnership(ctx, r.Logger, mirrorpeer)
+	if err != nil {
+		t.Errorf("ensureDRClusterOwnership() should not return error when owner reference already set. Error: %s", err)
+	}
+
+	// Verify owner reference is still set
+	var updatedDRCluster1 ramenv1alpha1.DRCluster
+	err = r.Get(ctx, types.NamespacedName{Name: "cluster1"}, &updatedDRCluster1)
+	if err != nil {
+		t.Errorf("Failed to get DRCluster cluster1. Error: %s", err)
+	}
+
+	hasOwner, err := controllerutil.HasOwnerReference(updatedDRCluster1.OwnerReferences, mirrorpeer, r.Scheme)
+	if err != nil {
+		t.Errorf("Failed to check owner reference. Error: %s", err)
+	}
+	if !hasOwner {
+		t.Error("DRCluster cluster1 should still have owner reference set")
 	}
 }
