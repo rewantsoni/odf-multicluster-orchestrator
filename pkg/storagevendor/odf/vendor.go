@@ -93,14 +93,14 @@ func (odf *ODFVendor) ValidateVersion(ctx context.Context, mirrorPeer *multiclus
 }
 
 func (odf *ODFVendor) ConfigureStorageForDR(ctx context.Context, mirrorPeer *multiclusterv1alpha1.MirrorPeer) (ctrl.Result, error) {
-	if err := odf.processManagedClusterAddon(ctx, mirrorPeer); err != nil {
-		odf.logger.Error("Failed to process managedclusteraddon", "error", err)
-		mirrorPeer.Status.Message = multiclusterv1alpha1.ManagedClusterAddOnFailed
-		utils.SetConfiguredFalseCondition(&mirrorPeer.Status.Conditions, mirrorPeer.Generation, err.Error(), multiclusterv1alpha1.ReasonManagedClusterAddonFailed)
-		return ctrl.Result{}, err
-	}
-
 	if mirrorPeer.Spec.Type == multiclusterv1alpha1.Async {
+		if err := odf.processManagedClusterAddon(ctx, mirrorPeer); err != nil {
+			odf.logger.Error("Failed to process managedclusteraddon", "error", err)
+			mirrorPeer.Status.Message = multiclusterv1alpha1.ManagedClusterAddOnFailed
+			utils.SetConfiguredFalseCondition(&mirrorPeer.Status.Conditions, mirrorPeer.Generation, err.Error(), multiclusterv1alpha1.ReasonManagedClusterAddonFailed)
+			return ctrl.Result{}, err
+		}
+
 		if err := createStorageClusterPeer(ctx, odf.client, odf.logger, mirrorPeer, odf.infoMap); err != nil {
 			odf.logger.Error("Failed to create StorageClusterPeer", "error", err)
 			mirrorPeer.Status.Message = multiclusterv1alpha1.PeeringFailed
@@ -127,6 +127,11 @@ func (odf *ODFVendor) ConfigureStorageForDR(ctx context.Context, mirrorPeer *mul
 			utils.SetConfiguredFalseCondition(&mirrorPeer.Status.Conditions, mirrorPeer.Generation, multiclusterv1alpha1.MessagePeeringInProgress, multiclusterv1alpha1.ReasonPeeringInProgress)
 			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
+	} else {
+		if err := odf.deleteManagedClusterAddon(ctx, mirrorPeer); err != nil {
+			odf.logger.Error("Failed to delete ManagedClusterAddon", "error", err)
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{}, nil
 }
@@ -137,11 +142,10 @@ func (odf *ODFVendor) CleanupResources(ctx context.Context, mirrorPeer *multiclu
 			odf.logger.Error("Failed to remove clientID from cluster pairing ConfigMap", "error", err)
 			return reconcile.Result{}, err
 		}
-	}
-
-	if err := odf.deleteManagedClusterAddon(ctx, mirrorPeer); err != nil {
-		odf.logger.Error("Failed to delete ManagedClusterAddon", "error", err)
-		return reconcile.Result{}, err
+		if err := odf.deleteManagedClusterAddon(ctx, mirrorPeer); err != nil {
+			odf.logger.Error("Failed to delete ManagedClusterAddon", "error", err)
+			return reconcile.Result{}, err
+		}
 	}
 	return ctrl.Result{}, nil
 }
