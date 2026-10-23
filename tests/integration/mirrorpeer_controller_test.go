@@ -28,7 +28,7 @@ import (
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/mirrorpeer"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/pkg/utils"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ramenv1alpha1 "github.com/ramendr/ramen/api/v1alpha1"
 	v1 "k8s.io/api/core/v1"

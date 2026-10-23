@@ -29,7 +29,7 @@ import (
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/internal/controller/mirrorpeer"
 	"github.com/red-hat-storage/odf-multicluster-orchestrator/pkg/utils"
 
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	ramenv1alpha1 "github.com/ramendr/ramen/api/v1alpha1"
 	viewv1beta1 "github.com/stolostron/multicloud-operators-foundation/pkg/apis/view/v1beta1"
@@ -158,7 +158,7 @@ var _ = BeforeSuite(func() {
 	err = k8sClient.Create(context.TODO(), odfClientInfoConfigMap, &client.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 
-}, 60)
+})
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
